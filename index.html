@@ -35,7 +35,8 @@ let W = 1280, H = 720;          // logical size; fit() sets it from the window (
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 const TITLE = 'New Dawn';
 const CONTROLS = ['Tippen oder Klicken: Spiegel setzen, drehen, entfernen',
-  'Tastatur: Pfeile + Leertaste · Z zurück · R neu · H Hinweis · M Ton'];
+  'Tastatur: Pfeile + Leertaste · Z zurück · R neu · H Hinweis · M Ton']; // no-break spaces keep a key with its action
+const TOUCH = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches); // phones and tablets: no keyboard hints
 const clock = window.GAME_CLOCK || { now: () => performance.now() / 1000 }; // a check may inject one
 const CHEAP = params.get('render') === 'cheap'; // a headless shot or check: draws at pixel ratio 1
 let seed;
@@ -106,6 +107,7 @@ const pointer = { x: -1, y: -1, inside: false, mouse: false };
 addEventListener('keydown', e => {
   startAudio();
   if (!e.repeat || e.code.startsWith('Arrow')) { down.add(e.code); hit.add(e.code); }
+  if (e.code.startsWith('Arrow') || e.code === 'Tab') pointer.mouse = false; // the keyboard takes the focus ring back
   if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'Backspace' || e.code === 'Tab') e.preventDefault();
 });
 addEventListener('keyup', e => down.delete(e.code));
@@ -164,22 +166,39 @@ const SFX = {
       note(f / 2, 1.2, { type: 'triangle', vol: 0.05, delay: k * 0.09 });
     });
   },
+  part(mask) { const f = { 1: 523.25, 2: 659.25, 4: 783.99 }; bitsOf(mask).forEach(b => note(f[b], 0.55, { vol: 0.08, attack: 0.02 })); },
+  wrong() { note(233.08, 0.28, { type: 'sawtooth', vol: 0.03 }); note(246.94, 0.28, { type: 'sawtooth', vol: 0.03 }); },
   star(k) { note([783.99, 987.77, 1174.66][k] || 1174.66, 0.5, { vol: 0.12, attack: 0.01 }); },
   click() { note(660, 0.07, { type: 'triangle', vol: 0.08 }); },
   hint() { note(988, 0.3, { vol: 0.08 }); note(1319, 0.4, { vol: 0.06, delay: 0.08 }); },
 };
-function buzz(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* not on this device */ } }
+function buzz(ms) { // only after the player has touched the page: browsers refuse it before
+  try { if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(ms); } catch (e) { /* not on this device */ }
+}
 
 // ---- Save: offline, in this browser -----------------------------------------------------
 const SAVE_KEY = 'newdawn.save.v1';
 const emptySave = () => ({ stars: {}, daily: {}, endless: 0, muted: false });
+/** Keeps only well-formed entries of a stored save, so an old or damaged save can never break the game. */
+function cleanSave(s) {
+  const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  const pick = (src, keyOk) => {
+    const o = {};
+    for (const [k, n] of Object.entries(obj(src))) { const v = Math.round(+n); if (keyOk(k) && v >= 1 && v <= 3) o[k] = v; }
+    return o;
+  };
+  return {
+    stars: pick(s.stars, k => /^\d+$/.test(k)), daily: pick(s.daily, k => /^\d{4}-\d\d-\d\d$/.test(k)),
+    endless: Math.max(0, Math.floor(+s.endless) || 0), muted: s.muted === true,
+  };
+}
+const FRESH = params.get('fresh') === '1'; // a test run: starts empty and never overwrites the real save
 let save = emptySave();
 try {
   const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
-  if (s && typeof s === 'object') save = Object.assign(save, s);
+  if (s && typeof s === 'object' && !FRESH) save = cleanSave(s);
 } catch (e) { /* storage off: progress lasts this visit */ }
-if (params.get('fresh') === '1') save = emptySave();
-function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* storage off */ } }
+function persist() { if (FRESH) return; try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* storage off */ } }
 muted = !!save.muted;
 function toggleMute() { setMuted(!muted); save.muted = muted; persist(); if (!muted) SFX.click(); }
 
@@ -198,7 +217,7 @@ const CHAPTERS = [
   { name: 'Morgenrot', theme: 2, accent: [255, 176, 136] },
 ];
 const TIPS = {
-  tap: 'Tippe auf das leuchtende Feld im Strahl. Nochmal tippen dreht den Spiegel.',
+  tap: 'Tippe auf das umrandete Feld im Strahl. Nochmal tippen dreht den Spiegel.',
   two: 'Zwei Knicke nötig. Ein dritter Tipp auf einen Spiegel entfernt ihn wieder.',
   par: 'Par = Spiegel der Lösung. Mit Par und ohne Hinweis gibt es drei Sterne.',
   colors: 'Jeder Kristall will genau seine Farbe.',
@@ -213,17 +232,20 @@ const TIPS = {
   final: 'Das letzte Rätsel vor Sonnenaufgang.',
 };
 // w,h: board; crys: crystals by colour; turns: mirrors per light path [min,max]; walls, fixed
-// (gold solution mirrors), decoy (gold mirrors off the solution), filters (colour glass).
+// (gold solution mirrors), decoy (gold mirrors in a beam), filters (colour glass); minPar: fewest
+// mirrors the answer needs (par is always the true minimum); cross: beams of the answer must cross
+// at least this often; needFilter: without its glass there would be a shorter answer; firstTurn:
+// the first answer mirror is this way round ('\' = 2), so the first tap has to be turned.
 const LEVELS = [
-  { w: 5, h: 5, crys: [RED], turns: [1, 1], walls: 0, tip: 'tap' },
+  { w: 5, h: 5, crys: [RED], turns: [1, 1], walls: 0, firstTurn: 2, tip: 'tap' },
   { w: 5, h: 5, crys: [RED], turns: [2, 2], walls: 1, tip: 'two' },
   { w: 6, h: 6, crys: [RED], turns: [3, 3], walls: 2, tip: 'par' },
   { w: 6, h: 6, crys: [RED, BLU], turns: [1, 1], walls: 2, tip: 'colors' },
-  { w: 6, h: 6, crys: [GRN, BLU], turns: [1, 2], walls: 2, minPar: 3, tip: 'cross' },
+  { w: 6, h: 6, crys: [GRN, BLU], turns: [1, 2], walls: 2, minPar: 3, cross: 1, tip: 'cross' },
   { w: 6, h: 7, crys: [RED, GRN], turns: [2, 2], walls: 3, fixed: 1, tip: 'fixed' },
-  { w: 7, h: 7, crys: [RED, GRN, BLU], turns: [1, 1], walls: 3 },
-  { w: 7, h: 7, crys: [BLU, RED], turns: [2, 3], walls: 4, decoy: 1 },
-  { w: 7, h: 7, crys: [RED, GRN, BLU], turns: [1, 2], walls: 4, decoy: 1, minPar: 4 },
+  { w: 7, h: 7, crys: [RED, GRN, BLU], turns: [1, 2], walls: 3, minPar: 4, cross: 1 },
+  { w: 7, h: 7, crys: [BLU, RED], turns: [2, 3], walls: 4, decoy: 1, cross: 1 },
+  { w: 7, h: 7, crys: [RED, GRN, BLU], turns: [1, 2], walls: 4, decoy: 1, minPar: 5 },
   { w: 7, h: 8, crys: [RED, GRN, BLU], turns: [2, 2], walls: 5, fixed: 1, decoy: 1 },
   { w: 6, h: 6, crys: [YEL], turns: [1, 1], walls: 1, tip: 'mix' },
   { w: 6, h: 6, crys: [MAG], turns: [1, 2], walls: 2, minPar: 3, tip: 'magenta' },
@@ -231,20 +253,20 @@ const LEVELS = [
   { w: 7, h: 7, crys: [YEL, BLU], turns: [1, 2], walls: 3, minPar: 4, tip: 'wrong' },
   { w: 7, h: 7, crys: [MAG, GRN], turns: [2, 2], walls: 4, fixed: 1, decoy: 1 },
   { w: 7, h: 8, crys: [YEL, CYA], turns: [1, 2], walls: 4, decoy: 1, minPar: 5 },
-  { w: 7, h: 8, crys: [MAG, YEL], turns: [1, 2], walls: 5, fixed: 1, minPar: 4 },
+  { w: 7, h: 8, crys: [MAG, YEL], turns: [1, 2], walls: 5, fixed: 1, minPar: 5 },
   { w: 8, h: 8, crys: [CYA, MAG], turns: [2, 2], walls: 5, fixed: 2, decoy: 1 },
-  { w: 8, h: 8, crys: [YEL, CYA, BLU], turns: [1, 2], walls: 6, fixed: 1, decoy: 1, minPar: 5 },
+  { w: 8, h: 8, crys: [YEL, CYA, BLU], turns: [1, 2], walls: 6, fixed: 1, decoy: 1, minPar: 6 },
   { w: 8, h: 8, crys: [YEL, MAG, CYA], turns: [1, 2], walls: 6, fixed: 2, decoy: 2, minPar: 6 },
-  { w: 7, h: 7, crys: [RED, BLU], turns: [2, 2], walls: 3, filters: 2, tip: 'filter' },
+  { w: 7, h: 7, crys: [RED, BLU], turns: [2, 2], walls: 3, filters: 2, needFilter: true, tip: 'filter' },
   { w: 7, h: 7, crys: [WHT], turns: [1, 1], walls: 3, tip: 'white' },
-  { w: 7, h: 8, crys: [WHT], turns: [1, 2], walls: 4, filters: 1, minPar: 4 },
-  { w: 8, h: 8, crys: [YEL, GRN], turns: [1, 2], walls: 5, filters: 2, decoy: 1, minPar: 4 },
-  { w: 8, h: 8, crys: [WHT, RED], turns: [1, 2], walls: 5, fixed: 1, decoy: 1, minPar: 4 },
+  { w: 7, h: 8, crys: [WHT], turns: [1, 2], walls: 4, filters: 1, minPar: 5 },
+  { w: 8, h: 8, crys: [YEL, GRN], turns: [1, 2], walls: 5, filters: 2, decoy: 1, minPar: 5 },
+  { w: 8, h: 8, crys: [WHT, RED], turns: [1, 2], walls: 5, fixed: 1, decoy: 1, minPar: 5 },
   { w: 8, h: 8, crys: [MAG, CYA], turns: [2, 2], walls: 6, filters: 2, fixed: 2 },
-  { w: 8, h: 9, crys: [WHT, BLU], turns: [1, 2], walls: 6, filters: 1, fixed: 1, decoy: 2, minPar: 4 },
-  { w: 8, h: 9, crys: [YEL, MAG, CYA], turns: [1, 2], walls: 7, filters: 2, fixed: 2, decoy: 2, minPar: 5 },
-  { w: 9, h: 9, crys: [WHT, YEL], turns: [1, 2], walls: 7, filters: 2, fixed: 2, decoy: 2, minPar: 5 },
-  { w: 9, h: 9, crys: [WHT, MAG, GRN], turns: [1, 2], walls: 8, filters: 3, fixed: 3, decoy: 3, minPar: 5, tip: 'final' },
+  { w: 8, h: 9, crys: [WHT, BLU], turns: [1, 2], walls: 6, filters: 1, fixed: 1, decoy: 2, minPar: 6 },
+  { w: 8, h: 9, crys: [YEL, MAG, CYA], turns: [1, 2], walls: 7, filters: 2, fixed: 2, decoy: 2, minPar: 6 },
+  { w: 9, h: 9, crys: [WHT, YEL], turns: [1, 2], walls: 7, filters: 2, fixed: 2, decoy: 2, minPar: 6 },
+  { w: 9, h: 9, crys: [WHT, MAG, GRN], turns: [1, 2], walls: 8, filters: 3, fixed: 3, decoy: 3, minPar: 7, tip: 'final' },
 ];
 
 // ---- The light: one beam per lens, traced cell by cell -----------------------------------
@@ -286,6 +308,45 @@ function simulate(lv, placed) {
   return { beams, flashes, stops, recv, crys, lit, wrong, total: crys.length, solved: crys.length > 0 && lit === crys.length };
 }
 
+// ---- The solver: proves no answer uses fewer mirrors than par -----------------------------
+/** True if at most `budget` player mirrors can light every crystal; null if it gave up.
+ *  Lenses are traced in turn and each empty cell a beam reaches is decided once (pass, '/', '\'),
+ *  so every useful placement is tried. Each lens must end in a crystal that wants its colour
+ *  (the generator makes one lens per crystal colour), which prunes most branches. */
+function solvable(lv, budget, maxNodes = 200000) {
+  const { w, h, tile } = lv, N = w * h, lens = [], recv = new Uint8Array(N), dec = new Uint8Array(N);
+  for (let i = 0; i < N; i++) if (tile[i] && tile[i].t === 'emit') lens.push(i);
+  let nodes = 0;
+  const allLit = () => tile.every((t, i) => !t || t.t !== 'crys' || recv[i] === t.need);
+  function run(k, x, y, d, cost) {
+    if (++nodes > maxNodes) throw 0;
+    const c = tile[lens[k]].c;
+    for (let g = 0; g < 4 * N; g++) {
+      x += DIRS[d][0]; y += DIRS[d][1];
+      if (x < 0 || y < 0 || x >= w || y >= h) return false;
+      const i = y * w + x, t = tile[i];
+      if (t) {
+        if (t.t === 'fixed') { d = REF[t.m][d]; continue; }
+        if (t.t === 'filter' && t.c === c) continue;
+        if (t.t !== 'crys' || !(t.need & c)) return false;
+        const old = recv[i]; recv[i] |= c;
+        const ok = k + 1 === lens.length ? allLit() : run(k + 1, lens[k + 1] % w, (lens[k + 1] / w) | 0, tile[lens[k + 1]].d, cost);
+        recv[i] = old; return ok;
+      }
+      if (dec[i] === 3) continue;
+      if (dec[i]) { d = REF[dec[i]][d]; continue; }
+      for (const m of cost < budget ? [3, 1, 2] : [3]) {
+        dec[i] = m;
+        const ok = run(k, x, y, m === 3 ? d : REF[m][d], cost + (m === 3 ? 0 : 1));
+        dec[i] = 0; if (ok) return true;
+      }
+      return false;
+    }
+    return false;
+  }
+  try { return run(0, lens[0] % w, (lens[0] / w) | 0, tile[lens[0]].d, 0); } catch (e) { return null; }
+}
+
 // ---- The generator: builds each board backwards from its crystals ------------------------
 function shuffle(a, r) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 /** One try at a board for spec; returns a level or null. Every path is a light route from a
@@ -294,7 +355,7 @@ function tryGen(spec, r) {
   const { w, h } = spec, N = w * h;
   const tile = new Array(N).fill(null);
   const pass = new Uint8Array(N), passColor = new Uint8Array(N), passCount = new Uint8Array(N);
-  const sol = new Int8Array(N);
+  const sol = new Int8Array(N), paths = []; // paths: each light route's mirror cells
   const isFree = i => !tile[i] && !pass[i] && !sol[i];
   const maxSeg = tune.maxSegment;
   function walkOut(start, d, turns, c) {
@@ -325,6 +386,7 @@ function tryGen(spec, r) {
       if (t === turns) { // the lens, facing back along the path toward the crystal
         for (const [i, ax] of cells) { pass[i] |= ax; passColor[i] |= c; passCount[i]++; }
         for (const [i, m] of mirrors) sol[i] = m;
+        paths.push(mirrors.map(m => m[0]));
         tile[end] = { t: 'emit', c, d: (d + 2) % 4 };
         return true;
       }
@@ -345,31 +407,73 @@ function tryGen(spec, r) {
     }
   }
   const solCells = shuffle([...Array(N).keys()].filter(i => sol[i]), r);
-  const nFixed = Math.min(spec.fixed || 0, Math.max(0, solCells.length - 1));
-  for (let k = 0; k < nFixed; k++) tile[solCells[k]] = { t: 'fixed', m: sol[solCells[k]] };
-  const playerSol = solCells.slice(nFixed).map(i => ({ i, m: sol[i] }));
+  const left = paths.map(p => p.length), gold = new Set(); // gold never takes a route's last player mirror
+  for (const i of solCells) {
+    if (gold.size >= (spec.fixed || 0)) break;
+    const p = paths.findIndex(q => q.includes(i));
+    if (left[p] > 1) { left[p]--; gold.add(i); tile[i] = { t: 'fixed', m: sol[i] }; }
+  }
+  const playerSol = solCells.filter(i => !gold.has(i)).map(i => ({ i, m: sol[i] }));
   if (playerSol.length < (spec.minPar || 1)) return null;
   const freeCells = () => shuffle([...Array(N).keys()].filter(isFree), r);
   let fc = freeCells();
   for (let k = 0; k < (spec.walls || 0) && fc.length; k++) tile[fc.pop()] = { t: 'wall' };
-  fc = freeCells();
+  const lit0 = new Set(); // free cells a beam crosses before the first move: decoys go there, so they bend it
+  for (let e = 0; e < N; e++) {
+    const em = tile[e]; if (!em || em.t !== 'emit') continue;
+    let x = e % w, y = (e / w) | 0, d = em.d;
+    for (let g = 0; g < 4 * N; g++) {
+      x += DIRS[d][0]; y += DIRS[d][1];
+      if (x < 0 || y < 0 || x >= w || y >= h) break;
+      const i = y * w + x, t = tile[i];
+      if (!t) { lit0.add(i); continue; }
+      if (t.t === 'fixed') { d = REF[t.m][d]; continue; }
+      break;
+    }
+  }
+  fc = freeCells().filter(i => lit0.has(i));
   for (let k = 0; k < (spec.decoy || 0) && fc.length; k++) tile[fc.pop()] = { t: 'fixed', m: r() < 0.5 ? 1 : 2, decoy: true };
   const filterCells = shuffle([...Array(N).keys()].filter(i => !tile[i] && !sol[i] && passCount[i] === 1), r);
-  for (let k = 0; k < (spec.filters || 0) && k < filterCells.length; k++) tile[filterCells[k]] = { t: 'filter', c: passColor[filterCells[k]] };
+  if (filterCells.length < (spec.filters || 0)) return null; // every glass the level promises
+  for (let k = 0; k < (spec.filters || 0); k++) tile[filterCells[k]] = { t: 'filter', c: passColor[filterCells[k]] };
   const lv = { w, h, tile, sol: playerSol, par: playerSol.length, spec };
   const solved = new Int8Array(N); for (const s of playerSol) solved[s.i] = s.m;
   if (!simulate(lv, solved).solved) return null;
-  if (simulate(lv, new Int8Array(N)).lit > 0) return null; // nothing may shine before the first move
+  if (simulate(lv, new Int8Array(N)).crys.some(c => c.r & c.need)) return null; // no crystal gets any of its colours before the first move
+  if (spec.cross) { // the answer's beams cross (pass 3: a horizontal and a vertical route share the cell)
+    let n = 0; for (let i = 0; i < N; i++) if (pass[i] === 3 && !tile[i]) n++;
+    if (n < spec.cross) return null;
+  }
+  if (solvable(lv, lv.par - 1) !== false) return null; // par must be the fewest mirrors (null: not proven)
+  if (spec.needFilter && solvable({ ...lv, tile: tile.map(t => (t && t.t === 'filter' ? null : t)) }, lv.par - 1) !== true) return null; // the glass blocks a shorter way
   return lv;
 }
-/** A solvable board for spec from seed s; relaxes the rules only if every try fails. */
+/** The same board mirrored left to right ('/' and '\' swap). */
+function flipX(lv) {
+  const { w, h } = lv, j = i => ((i / w) | 0) * w + (w - 1 - i % w), tile = new Array(w * h).fill(null);
+  lv.tile.forEach((t, i) => {
+    if (!t) return;
+    const u = { ...t };
+    if (u.t === 'emit' && u.d % 2 === 0) u.d = 2 - u.d;
+    if (u.t === 'fixed') u.m = 3 - u.m;
+    tile[j(i)] = u;
+  });
+  return { ...lv, tile, sol: lv.sol.map(q => ({ i: j(q.i), m: 3 - q.m })) };
+}
+/** A solvable board for spec from seed s. If every try fails it first drops the extra rules and
+ *  one mirror of minPar, and only then falls back to a plain board (lv.relaxed says which). */
 function generate(spec, s) {
   const tries = tune.genAttempts;
-  for (let a = 0; a < tries; a++) { const lv = tryGen(spec, makeRng(s * 31 + a * 7919 + 17)); if (lv) return lv; }
-  const easier = { ...spec, walls: 0, decoy: 0, filters: 0, fixed: 0, minPar: 1, turns: [1, 1] };
-  for (let a = 0; a < tries; a++) { const lv = tryGen(easier, makeRng(s * 31 + a * 104729 + 3)); if (lv) { lv.relaxed = true; return lv; } }
-  const tiny = { w: 5, h: 5, crys: [RED], turns: [1, 1] };
-  for (let a = 1; ; a++) { const lv = tryGen(tiny, makeRng(a)); if (lv) { lv.relaxed = true; return lv; } }
+  const tiers = [spec,
+    { ...spec, cross: 0, needFilter: false, minPar: Math.max(1, (spec.minPar || 1) - 1) },
+    { ...spec, walls: 0, decoy: 0, filters: 0, fixed: 0, cross: 0, needFilter: false, minPar: 1, turns: [1, 1] }];
+  let lv = null;
+  for (let k = 0; k < tiers.length && !lv; k++) {
+    for (let a = 0; a < tries && !lv; a++) lv = tryGen(tiers[k], makeRng(s * 31 + a * 7919 + 17 + k * 104729));
+    if (lv && k) lv.relaxed = k;
+  }
+  for (let a = 1; !lv; a++) { lv = tryGen({ w: 5, h: 5, crys: [RED], turns: [1, 1] }, makeRng(a)); if (lv) lv.relaxed = 3; }
+  return spec.firstTurn && lv.sol[0].m !== spec.firstTurn ? flipX(lv) : lv;
 }
 
 // ---- Scenes and state -------------------------------------------------------------------
@@ -401,14 +505,19 @@ function reset() { // a fresh run of the current puzzle (or the first one)
   if (state && state.lv) startPuzzle(state.mode, state.li); else startPuzzle('campaign', nextLevel());
 }
 /** Starts a puzzle: mode campaign (li = level index), daily, or endless (li = puzzle number). */
+const DAILY_WEEK = [6, 8, 14, 16, 18, 23, 27]; // rules of these campaign levels, Monday (easy) to Sunday (hard)
 function startPuzzle(mode, li = 0) {
-  let spec, s, name, sub, theme;
+  let spec, s, name, sub, theme, dayKey = null;
   if (mode === 'daily') {
-    const key = todayKey(), n = +key.replace(/-/g, '');
-    spec = LEVELS[25 + (n % 5)]; s = n; name = 'Tagesrätsel'; sub = key.split('-').reverse().join('.'); theme = 3; li = 0;
+    const key = todayKey(), n = +key.replace(/-/g, ''), [yy, mm, dd] = key.split('-').map(Number);
+    const wd = (new Date(yy, mm - 1, dd).getDay() + 6) % 7;
+    spec = LEVELS[Math.min(DAILY_WEEK[wd], Math.max(3, nextLevel() - 1))]; // never rules the player has not met yet
+    s = n; dayKey = key; name = 'Tagesrätsel'; sub = key.split('-').reverse().join('.'); theme = 3; li = 0;
   } else if (mode === 'endless') {
     li = Math.max(0, li | 0);
-    spec = LEVELS[Math.min(LEVELS.length - 1, tune.endlessStart + li * tune.endlessRamp)];
+    let k = Math.min(LEVELS.length - 1, tune.endlessStart + li * tune.endlessRamp);
+    while (LEVELS[k].tip && k < LEVELS.length - 1) k++; // tutorials teach one idea; endless skips them
+    spec = LEVELS[k];
     s = 50000 + li * 7717 + CONFIG.seed; name = `Endlos · Rätsel ${li + 1}`; sub = `${save.endless || 0} gelöst`; theme = 3;
   } else {
     li = clamp(li | 0, 0, LEVELS.length - 1); spec = LEVELS[li];
@@ -418,7 +527,7 @@ function startPuzzle(mode, li = 0) {
   }
   const lv = generate(spec, s);
   state = {
-    t: 0, score: 0, gained: '', mode, li, lv, name, sub, theme,
+    t: 0, score: 0, gained: '', mode, li, lv, name, sub, theme, dayKey,
     placed: new Int8Array(lv.w * lv.h), undo: [], hint: null, hintsUsed: 0, hintFlash: 0,
     cur: { x: Math.floor(lv.w / 2), y: Math.floor(lv.h / 2) }, showCursor: false,
     won: false, winT: 0, resT: 0, stars: 0, used: 0, invShake: 0, tileShake: { i: -1, t: 0 },
@@ -447,11 +556,14 @@ function cycleCell(i, remove = false) {
   afterMove();
 }
 function afterMove() {
-  const before = new Map(state.sim.crys.map(c => [c.i, c.st]));
+  const before = new Map(state.sim.crys.map(c => [c.i, c]));
   state.sim = simulate(state.lv, state.placed);
   state.used = countUsed();
   for (const c of state.sim.crys) {
-    if (c.st === 'lit' && before.get(c.i) !== 'lit') { SFX.crystal(c.need); burst(c.i, c.need, tune.sparkBurst); }
+    const was = before.get(c.i) || { st: 'off', r: 0 }, gained = c.r & ~was.r;
+    if (c.st === 'lit' && was.st !== 'lit') { SFX.crystal(c.need); burst(c.i, c.need, tune.sparkBurst); }
+    else if (c.st === 'part' && gained) { SFX.part(gained); burst(c.i, gained, 6); } // one colour of the mix arrived
+    else if (c.st === 'wrong' && was.st !== 'wrong') { SFX.wrong(); state.tileShake = { i: c.i, t: 0.35 }; }
   }
   if (state.sim.solved && !state.won) {
     state.won = true; state.winT = 0;
@@ -467,7 +579,7 @@ function afterMove() {
 }
 function recordWin() {
   if (state.mode === 'campaign') save.stars[state.li] = Math.max(save.stars[state.li] || 0, state.stars);
-  else if (state.mode === 'daily') { const k = todayKey(); save.daily[k] = Math.max(save.daily[k] || 0, state.stars); }
+  else if (state.mode === 'daily') { const k = state.dayKey || todayKey(); save.daily[k] = Math.max(save.daily[k] || 0, state.stars); }
   else if (state.li >= (save.endless || 0)) save.endless = state.li + 1; // replaying an old one adds nothing
   state.score = state.stars; state.gained = `${state.stars} Sterne`;
   persist();
@@ -475,11 +587,16 @@ function recordWin() {
 function useHint() {
   if (state.won) return;
   const lv = state.lv, h = state.hint;
-  if (h && !h.free && (h.m ? state.placed[h.i] !== h.m : state.placed[h.i])) { SFX.hint(); state.hintFlash = 1; return; } // the shown one still stands
+  if (h && (h.m ? state.placed[h.i] !== h.m : state.placed[h.i])) { SFX.hint(); state.hintFlash = 1; return; } // the shown one still stands: free
   if (state.hintsUsed >= tune.maxHints) { SFX.deny(); return; }
   const next = lv.sol.find(s => state.placed[s.i] !== s.m);
-  if (next) state.hint = { ...next };
-  else { // every solution mirror is set: an extra one is in the way
+  if (next) {
+    state.hint = { ...next };
+    if (!state.placed[next.i] && countUsed() >= state.inventory) { // no mirror left: also mark one that has to come off
+      const solSet = new Set(lv.sol.map(s => s.i));
+      state.hint.spare = [...state.placed.keys()].find(i => state.placed[i] && !solSet.has(i));
+    }
+  } else { // every solution mirror is set: an extra one is in the way
     const solSet = new Set(lv.sol.map(s => s.i));
     const extra = [...state.placed.keys()].find(i => state.placed[i] && !solSet.has(i));
     state.hint = extra === undefined ? null : { i: extra, m: 0 };
@@ -547,7 +664,9 @@ function glow(x, y, r, key, a = 1) {
   const pa = ctx.globalAlpha;
   ctx.globalAlpha = pa * Math.min(1, a); ctx.drawImage(glowSprite(key), x - r, y - r, r * 2, r * 2); ctx.globalAlpha = pa;
 }
+const isFinalWin = () => scene === 'results' && state && state.mode === 'campaign' && state.li === LEVELS.length - 1;
 function skyTarget() {
+  if (isFinalWin()) return 3; // the last level brings the dawn sky
   if ((scene === 'play' || scene === 'results') && state) return state.theme;
   return titleTheme();
 }
@@ -563,6 +682,16 @@ function updateSky(dt) {
   if (scene === 'play' && state && state.won) st = 0.35;
   sky.sunTarget = st;
   sky.sun += (sky.sunTarget - sky.sun) * (1 - Math.exp(-1.6 * dt));
+}
+/** The sun: slowly turning rays (alpha ra) around a warm gradient disc. */
+function drawSunDisc(sx, sy, sr, t, ra) {
+  ctx.save(); ctx.translate(sx, sy); ctx.rotate(t * 0.05);
+  ctx.fillStyle = `rgba(255,220,160,${ra})`;
+  for (let k = 0; k < 12; k++) { ctx.rotate(Math.PI / 6); ctx.beginPath(); ctx.moveTo(-sr * 0.12, 0); ctx.lineTo(0, -sr * 3.4); ctx.lineTo(sr * 0.12, 0); ctx.fill(); }
+  ctx.restore();
+  const sg = ctx.createRadialGradient(sx - sr * 0.3, sy - sr * 0.3, sr * 0.1, sx, sy, sr);
+  sg.addColorStop(0, '#fffbe8'); sg.addColorStop(0.55, '#ffd27a'); sg.addColorStop(1, '#ff8a5c');
+  ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI * 2); ctx.fill();
 }
 function hillY(x, base, amp, ph) {
   return base + Math.sin(x * 0.0045 + ph) * amp + Math.sin(x * 0.0113 + ph * 2.1) * amp * 0.45 + Math.sin(x * 0.031 + ph * 3.7) * amp * 0.12;
@@ -591,13 +720,7 @@ function drawSky(t) {
   glow(sx, sy, sr * 6, 'sun', 0.25 + sky.sun * 0.5);
   glow(sx, H * 0.98, Math.max(W, H) * 0.7, 'sun', 0.06 + th.ga * 0.28);
   ctx.globalCompositeOperation = 'source-over';
-  ctx.save(); ctx.translate(sx, sy); ctx.rotate(t * 0.05);
-  ctx.fillStyle = `rgba(255,220,160,${0.05 + sky.sun * 0.1})`;
-  for (let k = 0; k < 12; k++) { ctx.rotate(Math.PI / 6); ctx.beginPath(); ctx.moveTo(-sr * 0.12, 0); ctx.lineTo(0, -sr * 3.4); ctx.lineTo(sr * 0.12, 0); ctx.fill(); }
-  ctx.restore();
-  const sg = ctx.createRadialGradient(sx - sr * 0.3, sy - sr * 0.3, sr * 0.1, sx, sy, sr);
-  sg.addColorStop(0, '#fffbe8'); sg.addColorStop(0.55, '#ffd27a'); sg.addColorStop(1, '#ff8a5c');
-  ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI * 2); ctx.fill();
+  drawSunDisc(sx, sy, sr, t, 0.05 + sky.sun * 0.1);
   ctx.restore();
   ctx.fillStyle = css(th.h1); hillPath(H * 0.84, H * 0.035, 1.3); ctx.fill();
   ctx.fillStyle = css(th.h2); hillPath(H * 0.9, H * 0.03, 4.1); ctx.fill();
@@ -607,21 +730,36 @@ function drawSky(t) {
   }
 }
 
+/** Where the board, the tip and the buttons go: portrait, landscape, or short landscape (phones). */
 function playLayout() {
-  const lv = state.lv, land = W > H * 1.12;
-  let cs, bx, by, tipBox;
-  if (land) {
-    const top = 78, left = 132, ay = top + 56, ah = H - ay - 20, aw = W - left - 28;
+  const lv = state.lv, land = W > H * 1.12, TIP_LH = 21;
+  const tipLines = (w, max) => state.tip ? Math.min(max, wrap(state.tip, Math.min(w, 640) - 28, 17, 500).length) : 0;
+  let cs, bx, by, tipBox, mode;
+  if (land && H < 560 && W >= H * 1.6) { // phone on its side: the board takes the full height, the tip sits right
+    mode = 'short';
+    ctx.font = `800 28px ${FONT}`; const nw = ctx.measureText(state.name).width; ctx.font = `600 16px ${FONT}`;
+    const left = Math.max(132, 18 + Math.max(nw, ctx.measureText(state.sub).width) + 24);
+    const rc = Math.min(260, Math.round(W * 0.26)), ay = 14, ah = H - 28, aw = W - left - rc - 28;
     cs = Math.floor(Math.min(aw / lv.w, ah / lv.h, 100));
     bx = Math.round(left + (aw - cs * lv.w) / 2); by = Math.round(ay + (ah - cs * lv.h) / 2);
-    tipBox = { x: left, y: top - 2, w: aw, h: 52, lines: 2 };
+    const n = tipLines(rc, 8);
+    tipBox = { x: W - rc - 14, y: 96, w: rc, h: n * TIP_LH + 14, lines: 8 };
+  } else if (land) {
+    mode = 'land';
+    const top = 80, left = 132, aw = W - left - 28, n = tipLines(aw, 2);
+    const ay = n ? top + n * TIP_LH + 14 + 22 : 96, ah = H - ay - 20;
+    cs = Math.floor(Math.min(aw / lv.w, ah / lv.h, 100));
+    bx = Math.round(left + (aw - cs * lv.w) / 2); by = Math.round(ay + (ah - cs * lv.h) / 2);
+    tipBox = { x: left, y: top, w: aw, h: n * TIP_LH + 14, lines: 2 };
   } else {
-    const top = 90, tipH = 78, bottom = 112, ay = top + tipH, ah = H - ay - bottom - 12, aw = W - 28;
+    mode = 'port';
+    const top = 90, bottom = 112, n = tipLines(W - 36, 3);
+    const ay = n ? top + n * TIP_LH + 14 + 16 : 96, ah = H - ay - bottom - 12, aw = W - 28;
     cs = Math.floor(Math.min(aw / lv.w, ah / lv.h, 100));
     bx = Math.round((W - cs * lv.w) / 2); by = Math.round(ay + (ah - cs * lv.h) / 2);
-    tipBox = { x: 18, y: top, w: W - 36, h: tipH, lines: 3 };
+    tipBox = { x: 18, y: top, w: W - 36, h: n * TIP_LH + 14, lines: 3 };
   }
-  return { cs, bx, by, bw: cs * lv.w, bh: cs * lv.h, tipBox, land };
+  return { cs, bx, by, bw: cs * lv.w, bh: cs * lv.h, tipBox, land, mode };
 }
 function cellAt(L, x, y) {
   const lv = state.lv, cx = Math.floor((x - L.bx) / L.cs), cy = Math.floor((y - L.by) / L.cs);
@@ -630,10 +768,16 @@ function cellAt(L, x, y) {
 
 function drawBoardBase(L) {
   const lv = state.lv, { cs, bx, by, bw, bh } = L;
+  const wf = state.won ? (scene === 'results' ? 1 : ease(state.winT / 1.1)) : 0; // on a win the night glass clears
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
-  rr(bx - 14, by - 14, bw + 28, bh + 28, 22); ctx.fillStyle = 'rgba(7,9,26,0.78)'; ctx.fill();
+  rr(bx - 14, by - 14, bw + 28, bh + 28, 22); ctx.fillStyle = `rgba(7,9,26,${0.78 - 0.33 * wf})`; ctx.fill();
   ctx.restore();
+  if (wf > 0) { // ... and the rising sun shines through it
+    const sy = H * 1.02 - sky.sun * H * 0.5, sr = Math.min(W, H) * 0.09;
+    ctx.save(); rr(bx - 14, by - 14, bw + 28, bh + 28, 22); ctx.clip(); ctx.globalCompositeOperation = 'lighter';
+    glow(W / 2, sy, sr * 7, 'sun', 0.55 * wf); glow(W / 2, sy, sr * 2.2, 'sun', 0.5 * wf); ctx.restore();
+  }
   rr(bx - 14, by - 14, bw + 28, bh + 28, 22); ctx.strokeStyle = 'rgba(170,190,255,0.20)'; ctx.lineWidth = 1.5; ctx.stroke();
   const hov = pointer.inside && pointer.mouse ? cellAt(L, pointer.x, pointer.y) : -1;
   for (let y = 0; y < lv.h; y++) for (let x = 0; x < lv.w; x++) {
@@ -695,15 +839,25 @@ function drawEmitter(cx, cy, s, c, d, t) {
   const lg = ctx.createRadialGradient(-s * 0.04, -s * 0.05, 0, 0, 0, s * 0.18);
   lg.addColorStop(0, '#ffffff'); lg.addColorStop(0.4, css(mix(col, [255, 255, 255], 0.3))); lg.addColorStop(1, css(mix(col, [0, 0, 0], 0.35)));
   ctx.fillStyle = lg; ctx.beginPath(); ctx.arc(0, 0, s * 0.17 * pulse, 0, Math.PI * 2); ctx.fill();
+  ctx.rotate(-d * Math.PI / 2); glyphPath(c, 0, 0, s * 0.075); ctx.fillStyle = 'rgba(20,16,40,0.78)'; ctx.fill(); // its colour's shape
   ctx.restore();
   ctx.save(); ctx.globalCompositeOperation = 'lighter'; glow(cx, cy, s * 0.42, c, 0.45 * pulse); ctx.restore();
 }
+/** Each primary colour also has a shape, for colour-blind players: red a triangle, green a square, blue a diamond. */
+function glyphPath(b, x, y, r) {
+  ctx.beginPath();
+  if (b === RED) { ctx.moveTo(x, y - r * 1.05); ctx.lineTo(x + r * 1.05, y + r * 0.8); ctx.lineTo(x - r * 1.05, y + r * 0.8); }
+  else if (b === GRN) { const q = r * 0.82; ctx.moveTo(x - q, y - q); ctx.lineTo(x + q, y - q); ctx.lineTo(x + q, y + q); ctx.lineTo(x - q, y + q); }
+  else { ctx.moveTo(x, y - r * 1.15); ctx.lineTo(x + r * 0.8, y); ctx.lineTo(x, y + r * 1.15); ctx.lineTo(x - r * 0.8, y); }
+  ctx.closePath();
+}
 const GEM = [[0, -0.40], [0.29, -0.17], [0.29, 0.15], [0, 0.38], [-0.29, 0.15], [-0.29, -0.17]];
-/** The crystal: a faceted gem in its colour; dark until its light arrives, pips show the mix. */
+/** The crystal: a faceted gem in its colour; dark until its light arrives. The pips under it show
+ *  each colour it needs (filled once it arrives) and, crossed out, any colour that must not come in. */
 function drawCrystal(cx, cy, s, need, recv, st, lit, t, i) {
-  const col = CRGB[need], comps = bitsOf(need), multi = comps.length > 1, k = multi ? 0.86 : 1;
+  const col = CRGB[need], comps = bitsOf(need), extra = bitsOf(recv & ~need), k = 0.86;
   if (st === 'wrong') cx += Math.sin(t * 46 + i) * s * 0.025;
-  const oy = multi ? -s * 0.06 : 0;
+  const oy = -s * 0.07;
   ctx.save(); ctx.translate(cx, cy + oy); ctx.scale(k, k);
   if (lit > 0.01) {
     ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.rotate(t * 0.5);
@@ -716,7 +870,7 @@ function drawCrystal(cx, cy, s, need, recv, st, lit, t, i) {
   const top = mix(mix(col, dark, 0.7), mix(col, [255, 255, 255], 0.5), lit), bot = mix(mix(col, dark, 0.85), col, lit);
   const g = ctx.createLinearGradient(0, -s * 0.4, 0, s * 0.4); g.addColorStop(0, css(top)); g.addColorStop(1, css(bot));
   path(); ctx.fillStyle = g; ctx.fill();
-  if ((st === 'part' || st === 'wrong') && recv) { path(); ctx.fillStyle = css(CRGB[recv] || col, 0.28 + 0.1 * Math.sin(t * 5)); ctx.fill(); }
+  if (st === 'part' && recv) { path(); ctx.fillStyle = css(CRGB[recv] || col, 0.28 + 0.1 * Math.sin(t * 5)); ctx.fill(); }
   ctx.strokeStyle = `rgba(255,255,255,${0.16 + 0.45 * lit})`; ctx.lineWidth = Math.max(1, s * 0.018);
   const inner = GEM.map(([x, y]) => [x * 0.45 * s, (y * 0.45 - 0.04) * s]);
   ctx.beginPath(); inner.forEach(([x, y], n) => n ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); ctx.stroke();
@@ -724,17 +878,23 @@ function drawCrystal(cx, cy, s, need, recv, st, lit, t, i) {
   ctx.fillStyle = `rgba(255,255,255,${0.12 + 0.35 * lit})`;
   ctx.beginPath(); ctx.moveTo(inner[5][0], inner[5][1]); ctx.lineTo(inner[0][0], inner[0][1]); ctx.lineTo(0, -s * 0.4); ctx.lineTo(-s * 0.29, -s * 0.17); ctx.closePath(); ctx.fill();
   path();
-  ctx.strokeStyle = st === 'wrong' ? `rgba(255,${Math.round(120 + 100 * Math.abs(Math.sin(t * 14)))},120,0.95)` : css(mix(col, [255, 255, 255], 0.2 * lit), 0.55 + 0.45 * lit);
-  ctx.lineWidth = Math.max(1.5, s * 0.035); ctx.stroke();
+  if (st === 'wrong') { ctx.strokeStyle = css(mix(col, [255, 255, 255], 0.3), 0.35 + 0.65 * Math.abs(Math.sin(t * 7))); ctx.lineWidth = Math.max(2, s * 0.05); }
+  else { ctx.strokeStyle = css(mix(col, [255, 255, 255], 0.2 * lit), 0.55 + 0.45 * lit); ctx.lineWidth = Math.max(1.5, s * 0.035); }
+  ctx.stroke();
   ctx.restore();
-  if (multi) { // pips: which colours this crystal needs, filled once they arrive
-    comps.forEach((b, n) => {
-      const px = cx + (n - (comps.length - 1) / 2) * s * 0.19, py = cy + s * 0.37, r = s * 0.065, has = recv & b;
-      ctx.beginPath(); ctx.moveTo(px, py - r); ctx.lineTo(px + r, py); ctx.lineTo(px, py + r); ctx.lineTo(px - r, py); ctx.closePath();
-      ctx.fillStyle = has ? css(CRGB[b]) : 'rgba(10,12,30,0.8)'; ctx.fill();
-      ctx.strokeStyle = css(CRGB[b], has ? 1 : 0.7); ctx.lineWidth = Math.max(1, s * 0.02); ctx.stroke();
-    });
-  }
+  // pips on a dark pill: needed colours (filled once they arrive), then foreign colours crossed out
+  const all = [...comps, ...extra], r = Math.max(s * 0.07, 3.5 / VK), gap = r * 2.9, py = cy + s * 0.37, w0 = (all.length - 1) * gap;
+  rr(cx - w0 / 2 - r * 1.7, py - r * 1.6, w0 + r * 3.4, r * 3.2, r * 1.6); ctx.fillStyle = 'rgba(6,8,24,0.82)'; ctx.fill();
+  all.forEach((b, n) => {
+    const px = cx - w0 / 2 + n * gap, has = recv & b, foreign = n >= comps.length;
+    glyphPath(b, px, py, r);
+    ctx.fillStyle = has ? css(CRGB[b]) : css(CRGB[b], 0.18); ctx.fill();
+    ctx.strokeStyle = css(CRGB[b], 0.95); ctx.lineWidth = Math.max(1.5, s * 0.03); ctx.stroke();
+    if (foreign) {
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(1.5, s * 0.025); ctx.beginPath();
+      ctx.moveTo(px - r * 1.2, py - r * 1.2); ctx.lineTo(px + r * 1.2, py + r * 1.2); ctx.moveTo(px + r * 1.2, py - r * 1.2); ctx.lineTo(px - r * 1.2, py + r * 1.2); ctx.stroke();
+    }
+  });
   if (lit > 0.01) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; glow(cx, cy + oy, s * 0.95, need, 0.5 * lit * (0.85 + 0.15 * Math.sin(t * 2.4 + i))); ctx.restore(); }
 }
 /** A mirror bar: silver for yours, gold and bolted down for fixed ones, dashed for a hint. */
@@ -749,7 +909,8 @@ function drawMirror(cx, cy, s, m, kind, t) {
   ctx.rotate(m === 1 ? -Math.PI / 4 : Math.PI / 4);
   const len = s * 0.8, th = s * 0.13;
   if (kind === 'ghost') {
-    const a = 0.45 + 0.4 * Math.sin(t * 5);
+    const a = 0.75 + 0.25 * Math.sin(t * 5);
+    rr(-len / 2, -th / 2, len, th, th / 2); ctx.strokeStyle = 'rgba(4,8,24,0.8)'; ctx.lineWidth = Math.max(3, s * 0.08); ctx.stroke(); // dark under-stroke: readable over a beam
     ctx.setLineDash([s * 0.08, s * 0.06]); ctx.strokeStyle = `rgba(200,255,255,${a})`; ctx.lineWidth = Math.max(1.5, s * 0.04);
     rr(-len / 2, -th / 2, len, th, th / 2); ctx.stroke(); ctx.setLineDash([]); ctx.restore(); return;
   }
@@ -799,6 +960,19 @@ function drawFilter(cx, cy, s, c, t) {
   ctx.strokeStyle = '#dfe5ff'; ctx.lineWidth = Math.max(1.5, s * 0.03);
   const q = h * 1.12, e = s * 0.12;
   for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { ctx.beginPath(); ctx.moveTo(cx + sx * q, cy + sy * (q - e)); ctx.lineTo(cx + sx * q, cy + sy * q); ctx.lineTo(cx + sx * (q - e), cy + sy * q); ctx.stroke(); }
+  glyphPath(c, cx, cy, s * 0.1); ctx.fillStyle = css(col, 0.9); ctx.fill(); // its colour's shape
+}
+/** The hint marker: a pulsing plate with two ripples, cyan for "a mirror goes here", red for "take this one off". */
+function hintPlate(cx, cy, cs, t, rgb) {
+  const pulse = 0.5 + 0.5 * Math.sin(t * 5);
+  rr(cx - cs * 0.46, cy - cs * 0.46, cs * 0.92, cs * 0.92, cs * 0.16);
+  ctx.fillStyle = `rgba(${rgb},${0.10 + 0.08 * pulse})`; ctx.fill();
+  ctx.strokeStyle = `rgba(${rgb},${0.65 + 0.35 * pulse})`; ctx.lineWidth = Math.max(2, cs * 0.035); ctx.stroke();
+  for (let k = 0; k < 2; k++) {
+    const f = (t * 0.7 + k * 0.5) % 1;
+    ctx.strokeStyle = `rgba(${rgb},${0.55 * (1 - f)})`; ctx.lineWidth = Math.max(1.5, cs * 0.03 * (1 - f));
+    rr(cx - cs * (0.46 + 0.3 * f), cy - cs * (0.46 + 0.3 * f), cs * (0.92 + 0.6 * f), cs * (0.92 + 0.6 * f), cs * (0.16 + 0.15 * f)); ctx.stroke();
+  }
 }
 function drawTiles(L, t) {
   const lv = state.lv, { cs, bx, by } = L, sim = state.sim;
@@ -816,10 +990,11 @@ function drawTiles(L, t) {
     } else if (state.placed[i]) drawMirror(cx, cy, cs, state.placed[i], 'player', t);
     const hn = state.hint;
     if (hn && hn.i === i && !state.won && (hn.m ? state.placed[i] !== hn.m : state.placed[i])) {
+      hintPlate(cx, cy, cs, t, hn.m ? '150,255,255' : '255,150,150');
       if (hn.m) drawMirror(cx, cy, cs, hn.m, 'ghost', t);
-      else { ctx.strokeStyle = `rgba(255,140,140,${0.5 + 0.4 * Math.sin(t * 6)})`; ctx.lineWidth = 3; rr(cx - cs * 0.42, cy - cs * 0.42, cs * 0.84, cs * 0.84, cs * 0.14); ctx.stroke(); }
       ctx.save(); ctx.globalCompositeOperation = 'lighter'; glow(cx, cy, cs * 0.6, CYA, 0.22 + 0.12 * Math.sin(t * 5)); ctx.restore();
     }
+    if (hn && hn.spare === i && state.placed[i] && !state.won) hintPlate(cx, cy, cs, t, '255,150,150'); // this mirror has to come off
   }
   if (state.showCursor && !state.won) {
     const { x, y } = state.cur;
@@ -885,7 +1060,8 @@ function button(x, y, w, h, label, action, o = {}) {
   if (o.primary) {
     const g = ctx.createLinearGradient(x, y, x + w, y + h); g.addColorStop(0, '#ffc875'); g.addColorStop(1, '#ff7398');
     ctx.fillStyle = g; ctx.shadowColor = 'rgba(255,140,120,0.55)'; ctx.shadowBlur = hov || foc ? 28 : 16;
-  } else ctx.fillStyle = hov || foc ? 'rgba(255,255,255,0.17)' : 'rgba(255,255,255,0.085)';
+  } else if (o.solid) ctx.fillStyle = hov || foc ? 'rgba(46,50,104,0.9)' : 'rgba(16,18,50,0.74)'; // stays readable over the sun
+  else ctx.fillStyle = hov || foc ? 'rgba(255,255,255,0.17)' : 'rgba(255,255,255,0.085)';
   ctx.fill(); ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   ctx.strokeStyle = foc ? 'rgba(255,255,255,0.85)' : o.primary ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.2)';
   ctx.lineWidth = foc ? 2.5 : 1.5; ctx.stroke();
@@ -980,12 +1156,12 @@ const scenes = {
       const n = solvedCount(), daily = save.daily[todayKey()];
       const labels = [
         [n === 0 ? 'Spielen' : n >= LEVELS.length ? 'Weiterspielen' : `Weiter · Level ${nextLevel() + 1}`, { primary: true, size: 21 }],
-        [`Level wählen · ${starCount()}/${LEVELS.length * 3}`, { icon: 'menu', iconLeft: true, size: 19 }],
-        [daily ? 'Tagesrätsel gelöst' : 'Tagesrätsel', { icon: daily ? 'check' : 'sun', iconLeft: true, size: 19 }],
-        [`Endlos · ${save.endless || 0} gelöst`, { icon: 'loop', iconLeft: true, size: 19 }],
+        [`Level wählen · ${starCount()}/${LEVELS.length * 3}`, { icon: 'menu', iconLeft: true, size: 19, solid: true }],
+        [daily ? 'Tagesrätsel gelöst' : 'Tagesrätsel', { icon: daily ? 'check' : 'sun', iconLeft: true, size: 19, solid: true }],
+        [`Endlos · ${save.endless || 0} gelöst`, { icon: 'loop', iconLeft: true, size: 19, solid: true }],
       ];
-      const gap = 12, by0 = sy + 32, avail = H - by0 - 70;
-      const ctrl = wrap(CONTROLS.join(' · '), W - 40, 15);
+      const ctrl = (TOUCH ? CONTROLS.slice(0, 1) : CONTROLS).flatMap(c => wrap(c, W - 40, 15));
+      const gap = 12, by0 = sy + 32, avail = H - by0 - (ctrl.length * 21 + 30);
       if (avail >= 4 * 46 + 3 * gap || W < 600) { // one column
         const bw = Math.min(330, W - 60), bh = clamp((avail - 3 * gap) / 4, 46, 58);
         labels.forEach(([lab, o], k2) => button(cx - bw / 2, by0 + k2 * (bh + gap), bw, bh, lab, () => { SFX.click(); TITLE_ACTS[k2](); }, { ...o, focus: ui.focus === k2 && !pointer.mouse }));
@@ -1103,10 +1279,17 @@ const scenes = {
     draw(t) {
       const st = state;
       scenes.play.draw(t); ui.buttons = [];
-      ctx.fillStyle = `rgba(4,6,20,${0.45 * ease(st.resT / 0.4)})`; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = `rgba(4,6,20,${0.28 * ease(st.resT / 0.4)})`; ctx.fillRect(0, 0, W, H);
       const final = st.mode === 'campaign' && st.li === LEVELS.length - 1;
       const pw = Math.min(430, W - 32), ph = final ? 400 : 360, px = (W - pw) / 2;
       const py = Math.max(8, (H - ph) / 2) + (1 - ease(st.resT / 0.45)) * 40;
+      if (final) { // the sun comes up above the panel, or beside it when there is no room
+        const sr = Math.min(W, H) * 0.09, rise = ease((st.resT - 0.3) / 1.6);
+        let sx = W / 2, sy = py + sr - rise * sr * 2.2;
+        if (py < sr * 2.4) { sx = px + pw + (W - px - pw) / 2; sy = H * 0.62 - rise * H * 0.2; }
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; glow(sx, sy, sr * 6, 'sun', 0.55 * rise); ctx.restore();
+        ctx.save(); ctx.globalAlpha = rise; drawSunDisc(sx, sy, sr, t, 0.16); ctx.restore();
+      }
       ctx.save(); ctx.globalAlpha = ease(st.resT / 0.3);
       ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 40;
       rr(px, py, pw, ph, 26);
@@ -1124,7 +1307,7 @@ const scenes = {
       }
       const lv = st.lv;
       text(`Spiegel: ${st.used} · Par ${lv.par}` + (st.hintsUsed ? ` · Hinweise: ${st.hintsUsed}` : ''), W / 2, py + 168, 18, '#e3e6ff', 'center', 600);
-      let msg = st.used < lv.par ? 'Genial – unter Par!' : st.stars === 3 ? 'Perfekt gelöst.' : st.used > lv.par ? `Schaffst du es mit ${lv.par} Spiegeln?` : 'Ohne Hinweis gibt es drei Sterne.';
+      let msg = st.used < lv.par ? 'Genial – unter Par!' : st.stars === 3 ? 'Perfekt gelöst.' : st.used > lv.par ? `Schaffst du es mit ${lv.par} Spiegel${lv.par === 1 ? '' : 'n'}?` : 'Ohne Hinweis gibt es drei Sterne.';
       if (st.mode === 'endless') msg = `${save.endless} Rätsel gelöst – es wird schwerer.`;
       if (final) msg = 'Du hast den Morgen gebracht.';
       text(msg, W / 2, py + 198, 17, '#ffd9a8', 'center', 600);
@@ -1150,13 +1333,14 @@ function drawHud(L, t) {
   const st = state, lv = st.lv;
   text(st.name, 18, 34, 28, '#ffffff', 'left', 800);
   text(st.sub, 18, 64, 16, 'rgba(220,226,255,0.85)', 'left', 600);
-  // the mirror stock: one bar per mirror, bright while still free
+  // the mirror stock: one bar per mirror, bright while still free; packed tighter when the name needs the room
   const inv = st.inventory, free = Math.max(0, inv - st.used);
   const sh = st.invShake > 0 ? Math.sin(st.invShake * 50) * 6 : 0;
-  const ix = W - 18 + sh, n = Math.min(inv, 9), iw = 22;
-  for (let k = 0; k < n; k++) icon('mirror', ix - (n - k - 0.5) * iw, 32, 22, k < free ? '#e8eeff' : 'rgba(232,238,255,0.22)');
+  ctx.font = `800 28px ${FONT}`; const nameR = 18 + ctx.measureText(st.name).width;
+  const ix = W - 18 + sh, n = inv, iw = clamp((ix - nameR - 14) / Math.max(1, n), 8, 22);
+  for (let k = 0; k < n; k++) icon('mirror', ix - (n - k - 0.5) * iw, 32, Math.min(22, iw + 6), k < free ? '#e8eeff' : 'rgba(232,238,255,0.22)');
   text(`${free} frei · Par ${lv.par}`, ix, 64, 16, st.used > lv.par ? '#ffc39a' : 'rgba(220,226,255,0.85)', 'right', 600);
-  if (st.tip) { // the tip for this level
+  if (st.tip && scene !== 'results') { // the tip for this level
     const tb = L.tipBox, bw = Math.min(tb.w, 640), lh = 21;
     const lines = wrap(st.tip, bw - 28, 17, 500).slice(0, tb.lines);
     const bh = lines.length * lh + 14, bx = tb.x + (tb.w - bw) / 2, byy = tb.y + (tb.h - bh) / 2;
@@ -1174,7 +1358,7 @@ function drawHud(L, t) {
     [muted ? 'mute' : 'sound', 'Ton', toggleMute],
   ];
   if (L.land) {
-    const bw = 96, bh = 70, gap = 10, x = 18, y0 = Math.max(96, (H - (bh * 5 + gap * 4)) / 2);
+    const bw = 96, gap = 10, x = 18, bh = Math.min(70, Math.floor((H - 96 - 12 - gap * 4) / 5)), y0 = Math.max(96, (H - (bh * 5 + gap * 4)) / 2);
     defs.forEach(([ic, lab, act], k) => button(x, y0 + k * (bh + gap), bw, bh, lab, act, { icon: ic, r: 16, dim: (k === 1 && !st.undo.length) || (k === 3 && !hintsLeft) }));
   } else {
     const gap = 8, bw = Math.min(90, (W - 28 - gap * 4) / 5), bh = 74, total = bw * 5 + gap * 4, x0 = (W - total) / 2, y = H - bh - 22;
@@ -1185,20 +1369,23 @@ function drawHud(L, t) {
 
 // ---- Loop: fixed step, frame time clamped ---------------------------------------------
 function step() {
-  if (pressed('KeyM')) { toggleMute(); hit.delete('KeyM'); }
-  for (const p of taps.splice(0)) {
-    const b = [...ui.buttons].reverse().find(bb => inRect(p, bb));
-    if (b) b.action(); else if (scenes[scene].tap) scenes[scene].tap(p);
-  }
-  scenes[scene].update(STEP);
-  updateSky(STEP);
-  hit.clear();
+  try {
+    if (pressed('KeyM')) { toggleMute(); hit.delete('KeyM'); }
+    for (const p of taps.splice(0)) {
+      const sc = scene, st = state;
+      const b = [...ui.buttons].reverse().find(bb => inRect(p, bb));
+      if (b) b.action(); else if (scenes[scene].tap) scenes[scene].tap(p);
+      if (scene !== sc || state !== st) break; // later taps were aimed at the old screen
+    }
+    scenes[scene].update(STEP);
+    updateSky(STEP);
+  } finally { hit.clear(); }
 }
 let last, acc = 0, ALPHA = 1; // ALPHA: how far the frame is between the last two steps
 function tick() {
   const now = clock.now();
   acc += Math.min(now - last, 0.25); last = now; // a stall never fast-forwards the game
-  while (acc >= STEP) { step(); acc -= STEP; }
+  while (acc >= STEP) { acc -= STEP; step(); }
   ALPHA = acc / STEP;
   drawFrame();
 }
@@ -1206,7 +1393,7 @@ function drawFrame() {
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   scenes[scene].draw((scene === 'play' || scene === 'results') && state ? state.t : menuClock);
 }
-function frame() { tick(); requestAnimationFrame(frame); }
+function frame() { try { tick(); } finally { requestAnimationFrame(frame); } } // one error never stops the loop
 // A headless browser on a time budget runs timers but almost no animation frames: a timer
 // ticks when no frame has come for 100 ms on a visible page; a hidden tab stays paused.
 function timer() { if (document.visibilityState === 'visible' && clock.now() - last > 0.1) tick(); }
@@ -1223,8 +1410,8 @@ window.game = {
     if (draw) { ALPHA = alpha; drawFrame(); }
   },
   tap(x, y, btn = 0) { taps.push({ x, y, btn }); }, // logical coordinates, handled on the next step
-  solve() { if (scene === 'play' && !state.won) { for (const s of state.lv.sol) state.placed[s.i] = s.m; afterMove(); } }, // checks only
-  simulate, generate, LEVELS,
+  solve() { if (scene === 'play' && !state.won) { state.placed = new Int8Array(state.placed.length); for (const s of state.lv.sol) state.placed[s.i] = s.m; afterMove(); } }, // checks only
+  simulate, generate, LEVELS, solvable,
 };
 
 seed = Number(params.get('seed')) || CONFIG.seed;

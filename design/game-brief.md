@@ -38,13 +38,13 @@ Ab Level 5 (ca. Minute 5) kreuzen sich Strahlen, und ein Spiegel für Rot lenkt 
 - Kein Scheitern: falsche Farbe = Kristall flackert; Rückgängig/Neustart jederzeit.
 
 ## Features
-- [ ] Brett mit Strahlen-Simulation: Spiegel /, \, Mauern, Kristalle, Linsen (Emitter)
-- [ ] Farbmischung Rot/Grün/Blau → Gelb, Magenta, Cyan, Weiß
-- [ ] 30 Level in 3 Kapiteln, jedes bringt eine neue Idee (feste Spiegel, Mischen, Filter, Weiß)
-- [ ] Spiegel-Vorrat, Par und Sterne; Hinweis-Knopf
-- [ ] Rückgängig ohne Limit, Neustart, Fortschritt gespeichert (offline, localStorage)
-- [ ] Tagesrätsel und Endlos-Modus aus dem Generator
-- [ ] Synth-Sounds (Web Audio), Stummschalten
+- [x] Brett mit Strahlen-Simulation: Spiegel /, \, Mauern, Kristalle, Linsen (Emitter)
+- [x] Farbmischung Rot/Grün/Blau → Gelb, Magenta, Cyan, Weiß
+- [x] 30 Level in 3 Kapiteln, jedes bringt eine neue Idee (feste Spiegel, Mischen, Filter, Weiß)
+- [x] Spiegel-Vorrat, Par und Sterne; Hinweis-Knopf
+- [x] Rückgängig ohne Limit, Neustart, Fortschritt gespeichert (offline, localStorage)
+- [x] Tagesrätsel und Endlos-Modus aus dem Generator
+- [x] Synth-Sounds (Web Audio), Stummschalten
 
 ## Avoid
 - Internet-Abhängigkeiten (alles offline, eine Datei)

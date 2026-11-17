@@ -1,0 +1,1458 @@
+<!doctype html>
+<!-- PROTOTYPE - NOT FOR PRODUCTION -->
+<!-- Question: Macht es Spaß, Lichtstrahlen mit wenigen Spiegeln zu Farbkristallen zu lenken? -->
+<!-- Date: 2026-11-16 -->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070b1f">
+<meta name="description" content="New Dawn – ein Lichträtsel: Lenke farbige Lichtstrahlen mit Spiegeln zu Kristallen. Läuft offline.">
+<title>New Dawn</title>
+<style>
+  :root { --bg: #070b1f; --ink: #eef1ff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #070b1f; --ink: #eef1ff; } }
+  :root[data-theme="dark"] { --bg: #070b1f; --ink: #eef1ff; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden; }
+  body { font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  canvas { display: block; touch-action: none; outline: none; }
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0" aria-label="New Dawn – ein Lichträtsel. Lenke Licht mit Spiegeln zu den Kristallen."></canvas>
+<script>
+// PROTOTYPE - NOT FOR PRODUCTION
+// Question: Macht es Spaß, Lichtstrahlen mit wenigen Spiegeln zu Farbkristallen zu lenken?
+// Date: 2026-11-16
+// Every tuning value lives here, each with value, min, max and step. The game reads them live
+// through tune.<name> (index.html); the tweak panel, an add-on, writes them back here.
+window.CONFIG = {
+  seed: 1, // every gameplay random call reads rng(), seeded from this (or ?seed= in the address); also shapes all 30 levels
+  volume: { value: 0.5, min: 0, max: 1, step: 0.05 },
+
+  // --- Puzzle rules ---
+  spareMirrors: { value: 1, min: 0, max: 3, step: 1 },  // mirrors in stock beyond par (the generator's solution)
+  hintStarCost: { value: 1, min: 0, max: 2, step: 1 },  // stars lost per hint used
+  maxHints: { value: 3, min: 0, max: 6, step: 1 },      // hints per puzzle
+  overParStarCost: { value: 1, min: 0, max: 2, step: 1 }, // stars lost when more mirrors than par are used
+
+  // --- Level generator ---
+  genAttempts: { value: 900, min: 50, max: 4000, step: 50 }, // tries per level before rules are relaxed
+  maxSegment: { value: 4, min: 1, max: 8, step: 1 },     // longest straight run of a generated light path, in cells
+  endlessStart: { value: 6, min: 0, max: 29, step: 1 },  // campaign level (0-based) whose rules endless mode starts from
+  endlessRamp: { value: 2, min: 1, max: 5, step: 1 },    // campaign levels of difficulty added per endless puzzle solved
+
+  // --- Look and feel ---
+  beamGlow: { value: 1, min: 0.3, max: 2, step: 0.1 },   // brightness of the soft glow around beams
+  flowSpeed: { value: 2.2, min: 0, max: 6, step: 0.1 },  // light sparks running along beams, cells per second
+  flowSpacing: { value: 0.9, min: 0.4, max: 2, step: 0.1 }, // cells between sparks
+  sparkBurst: { value: 26, min: 0, max: 80, step: 2 },   // particles when a crystal lights up
+  winDelay: { value: 1.2, min: 0.3, max: 3, step: 0.1 }, // seconds from the last crystal to the results panel
+  skyBlend: { value: 1.2, min: 0.2, max: 5, step: 0.1 }, // how fast the sky changes colour between chapters, per second
+};
+</script>
+<script>
+'use strict';
+// New Dawn: route coloured light with mirrors into crystals; mix red, green and blue.
+// The one-shot's check hooks are kept: the fixed step, the clock hook, window.game and the
+// play and figures scenes. Everything is drawn in code; nothing is loaded from the network.
+
+// ---- Built to be checked ----------------------------------------------------------------
+const params = new URLSearchParams(location.search);
+const tune = new Proxy({}, { get: (_, k) => CONFIG[k].value }); // live: tune.beamGlow is CONFIG.beamGlow.value
+const STEP = 1 / 60;            // simulation step in seconds; motion is per second, never per frame
+let W = 1280, H = 720;          // logical size; fit() sets it from the window (short side 440..760)
+const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+const TITLE = 'New Dawn';
+const CONTROLS = ['Tippen oder Klicken: Spiegel setzen, drehen, entfernen',
+  'Tastatur: Pfeile + Leertaste · Z zurück · R neu · H Hinweis · M Ton']; // no-break spaces keep a key with its action
+const TOUCH = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches); // phones and tablets: no keyboard hints
+const clock = window.GAME_CLOCK || { now: () => performance.now() / 1000 }; // a check may inject one
+const CHEAP = params.get('render') === 'cheap'; // a headless shot or check: draws at pixel ratio 1
+let seed;
+function rng() { // mulberry32; every gameplay random call reads this, never Math.random
+  seed = (seed + 0x6D2B79F5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+/** A separate seeded generator (same mulberry32), so a level is the same whatever else ran. */
+function makeRng(s) {
+  let a = s | 0;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), a | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const events = []; // window.game.events: anything the game wants a run to see
+
+// ---- Screen ---------------------------------------------------------------------------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let VK = 1; // CSS pixels per logical unit
+function fit() { // fills the window; the short side is 440..760 logical units so text stays readable
+  const iw = Math.max(1, innerWidth), ih = Math.max(1, innerHeight);
+  const short = Math.min(iw, ih);
+  VK = short / Math.max(440, Math.min(760, short));
+  W = Math.round(iw / VK); H = Math.round(ih / VK);
+  const dpr = CHEAP ? 1 : Math.min(devicePixelRatio || 1, 2);
+  canvas.width = Math.round(iw * dpr); canvas.height = Math.round(ih * dpr);
+  canvas.style.width = iw + 'px'; canvas.style.height = ih + 'px';
+  ctx.setTransform(VK * dpr, 0, 0, VK * dpr, 0, 0);
+}
+addEventListener('resize', fit); fit();
+function text(s, x, y, size, c, align = 'center', weight = 600) {
+  ctx.fillStyle = c; ctx.font = `${weight} ${size}px ${FONT}`; ctx.textAlign = align;
+  ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
+}
+/** Splits s into lines no wider than maxW at the given size. */
+function wrap(s, maxW, size, weight = 500) {
+  ctx.font = `${weight} ${size}px ${FONT}`;
+  const words = s.split(' '), lines = []; let line = '';
+  for (const w of words) {
+    const t = line ? line + ' ' + w : w;
+    if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+function rr(x, y, w, h, r) { // rounded rectangle path
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath(); ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+const mix = (a, b, f) => a.map((v, k) => Math.round(v + (b[k] - v) * f));
+const css = (c, a = 1) => `rgba(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])},${a})`;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const ease = t => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+
+// ---- Input: keys by position (event.code), taps queued for the step ----------------------
+const down = new Set(), hit = new Set();
+const pressed = code => hit.has(code); // true for one step after the key goes down
+const taps = [];
+const pointer = { x: -1, y: -1, inside: false, mouse: false };
+addEventListener('keydown', e => {
+  startAudio();
+  if (!e.repeat || e.code.startsWith('Arrow')) { down.add(e.code); hit.add(e.code); }
+  if (e.code.startsWith('Arrow') || e.code === 'Tab') pointer.mouse = false; // the keyboard takes the focus ring back
+  if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'Backspace' || e.code === 'Tab') e.preventDefault();
+});
+addEventListener('keyup', e => down.delete(e.code));
+canvas.addEventListener('pointerdown', e => {
+  startAudio();
+  const x = e.clientX / VK, y = e.clientY / VK;
+  taps.push({ x, y, btn: e.button });
+  Object.assign(pointer, { x, y, inside: true, mouse: e.pointerType === 'mouse' });
+  e.preventDefault();
+});
+canvas.addEventListener('pointermove', e => {
+  Object.assign(pointer, { x: e.clientX / VK, y: e.clientY / VK, inside: true, mouse: e.pointerType === 'mouse' });
+});
+canvas.addEventListener('pointerleave', () => { pointer.inside = false; });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('blur', () => down.clear());
+
+// ---- Audio: started on first input, mute on M --------------------------------------------
+let audio = null, muted = false;
+function startAudio() {
+  if (!audio) {
+    try {
+      const ac = window.GAME_AUDIO || new (window.AudioContext || window.webkitAudioContext)(); // a check may inject one
+      const out = ac.createGain(); out.gain.value = muted ? 0 : tune.volume;
+      out.connect(ac.destination); audio = { ac, out };
+    } catch (e) { return; }
+  }
+  if (audio.ac.state === 'suspended') audio.ac.resume();
+}
+function setMuted(m) { muted = m; if (audio) audio.out.gain.value = m ? 0 : tune.volume; }
+addEventListener('tune', () => setMuted(muted)); // the tweak panel (an add-on), when added, moved a value: the volume follows
+/** One soft synth note: freq in Hz, dur in seconds, delay in seconds from now. */
+function note(freq, dur, o = {}) {
+  if (!audio || muted) return;
+  const { type = 'sine', vol = 0.18, delay = 0, attack = 0.012 } = o;
+  const t = audio.ac.currentTime + delay, osc = audio.ac.createOscillator(), g = audio.ac.createGain();
+  osc.type = type; osc.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g).connect(audio.out); osc.start(t); osc.stop(t + dur + 0.05);
+}
+const SCALE = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.51, 1567.98];
+const SFX = {
+  place(col) { const f = SCALE[col % SCALE.length]; note(f, 0.22, { type: 'triangle', vol: 0.16 }); note(f * 2, 0.16, { vol: 0.05, delay: 0.03 }); },
+  turn(col) { const f = SCALE[(col + 2) % SCALE.length]; note(f, 0.16, { type: 'triangle', vol: 0.13 }); },
+  remove() { note(392, 0.12, { type: 'triangle', vol: 0.1 }); note(294, 0.14, { type: 'triangle', vol: 0.08, delay: 0.05 }); },
+  deny() { note(150, 0.18, { type: 'square', vol: 0.05 }); note(140, 0.18, { type: 'square', vol: 0.04, delay: 0.08 }); },
+  crystal(mask) {
+    const f = { 1: 523.25, 2: 659.25, 4: 783.99 };
+    bitsOf(mask).forEach((b, k) => { note(f[b], 1.1, { vol: 0.12, attack: 0.02, delay: k * 0.04 }); note(f[b] * 2, 0.8, { vol: 0.04, delay: 0.05 + k * 0.04 }); });
+  },
+  win() {
+    [523.25, 659.25, 783.99, 1046.5, 1318.51, 1567.98].forEach((f, k) => {
+      note(f, 1.4 - k * 0.1, { vol: 0.12, delay: k * 0.09, attack: 0.02 });
+      note(f / 2, 1.2, { type: 'triangle', vol: 0.05, delay: k * 0.09 });
+    });
+  },
+  part(mask) { const f = { 1: 523.25, 2: 659.25, 4: 783.99 }; bitsOf(mask).forEach(b => note(f[b], 0.55, { vol: 0.08, attack: 0.02 })); },
+  wrong() { note(233.08, 0.28, { type: 'sawtooth', vol: 0.03 }); note(246.94, 0.28, { type: 'sawtooth', vol: 0.03 }); },
+  star(k) { note([783.99, 987.77, 1174.66][k] || 1174.66, 0.5, { vol: 0.12, attack: 0.01 }); },
+  click() { note(660, 0.07, { type: 'triangle', vol: 0.08 }); },
+  hint() { note(988, 0.3, { vol: 0.08 }); note(1319, 0.4, { vol: 0.06, delay: 0.08 }); },
+};
+function buzz(ms) { // only after the player has touched the page: browsers refuse it before
+  try { if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(ms); } catch (e) { /* not on this device */ }
+}
+
+// ---- Save: offline, in this browser -----------------------------------------------------
+const SAVE_KEY = 'newdawn.save.v1';
+const emptySave = () => ({ stars: {}, daily: {}, endless: 0, muted: false });
+/** Keeps only well-formed entries of a stored save, so an old or damaged save can never break the game. */
+function cleanSave(s) {
+  const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  const pick = (src, keyOk) => {
+    const o = {};
+    for (const [k, n] of Object.entries(obj(src))) { const v = Math.round(+n); if (keyOk(k) && v >= 1 && v <= 3) o[k] = v; }
+    return o;
+  };
+  return {
+    stars: pick(s.stars, k => /^\d+$/.test(k)), daily: pick(s.daily, k => /^\d{4}-\d\d-\d\d$/.test(k)),
+    endless: Math.max(0, Math.floor(+s.endless) || 0), muted: s.muted === true,
+  };
+}
+const FRESH = params.get('fresh') === '1'; // a test run: starts empty and never overwrites the real save
+let save = emptySave();
+try {
+  const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+  if (s && typeof s === 'object' && !FRESH) save = cleanSave(s);
+} catch (e) { /* storage off: progress lasts this visit */ }
+function persist() { if (FRESH) return; try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* storage off */ } }
+muted = !!save.muted;
+function toggleMute() { setMuted(!muted); save.muted = muted; persist(); if (!muted) SFX.click(); }
+
+// ---- The game: light and colour ---------------------------------------------------------
+const RED = 1, GRN = 2, BLU = 4, YEL = 3, MAG = 5, CYA = 6, WHT = 7;
+const CRGB = { 1: [255, 84, 110], 2: [70, 255, 150], 4: [90, 150, 255], 3: [255, 224, 90], 5: [255, 100, 236], 6: [90, 238, 255], 7: [255, 255, 255] };
+const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];       // right, down, left, up
+const REF = [null, [3, 2, 1, 0], [1, 0, 3, 2]];         // REF[mirror][dir]: 1 is '/', 2 is '\'
+const bitsOf = m => [RED, GRN, BLU].filter(b => m & b);
+
+// The campaign: three chapters, night to dawn. Each level is generated from its rules and a
+// fixed seed, and the generator proves it can be solved before it is shown.
+const CHAPTERS = [
+  { name: 'Mitternacht', theme: 0, accent: [150, 170, 255] },
+  { name: 'Blaue Stunde', theme: 1, accent: [110, 225, 255] },
+  { name: 'Morgenrot', theme: 2, accent: [255, 176, 136] },
+];
+const TIPS = {
+  tap: 'Tippe auf das umrandete Feld im Strahl. Nochmal tippen dreht den Spiegel.',
+  two: 'Zwei Knicke nötig. Ein dritter Tipp auf einen Spiegel entfernt ihn wieder.',
+  par: 'Par = Spiegel der Lösung. Mit Par und ohne Hinweis gibt es drei Sterne.',
+  colors: 'Jeder Kristall will genau seine Farbe.',
+  cross: 'Spiegel sind beidseitig: Sie lenken jeden Strahl ab. Kreuzen ist erlaubt.',
+  fixed: 'Goldene Spiegel sind fest verbaut. Nutze sie!',
+  mix: 'Gelb = Rot + Grün. Führe beide Strahlen in denselben Kristall.',
+  magenta: 'Magenta = Rot + Blau.',
+  cyan: 'Cyan = Grün + Blau.',
+  wrong: 'Trifft eine falsche Farbe, flackert der Kristall. Halte fremdes Licht fern.',
+  filter: 'Farbglas lässt nur Licht seiner eigenen Farbe durch.',
+  white: 'Weiß = Rot + Grün + Blau. Alle drei müssen hinein.',
+  final: 'Das letzte Rätsel vor Sonnenaufgang.',
+};
+// w,h: board; crys: crystals by colour; turns: mirrors per light path [min,max]; walls, fixed
+// (gold solution mirrors), decoy (gold mirrors in a beam), filters (colour glass); minPar: fewest
+// mirrors the answer needs (par is always the true minimum); cross: beams of the answer must cross
+// at least this often; needFilter: without its glass there would be a shorter answer; firstTurn:
+// the first answer mirror is this way round ('\' = 2), so the first tap has to be turned.
+const LEVELS = [
+  { w: 5, h: 5, crys: [RED], turns: [1, 1], walls: 0, firstTurn: 2, tip: 'tap' },
+  { w: 5, h: 5, crys: [RED], turns: [2, 2], walls: 1, tip: 'two' },
+  { w: 6, h: 6, crys: [RED], turns: [3, 3], walls: 2, tip: 'par' },
+  { w: 6, h: 6, crys: [RED, BLU], turns: [1, 1], walls: 2, tip: 'colors' },
+  { w: 6, h: 6, crys: [GRN, BLU], turns: [1, 2], walls: 2, minPar: 3, cross: 1, tip: 'cross' },
+  { w: 6, h: 7, crys: [RED, GRN], turns: [2, 2], walls: 3, fixed: 1, tip: 'fixed' },
+  { w: 7, h: 7, crys: [RED, GRN, BLU], turns: [1, 2], walls: 3, minPar: 4, cross: 1 },
+  { w: 7, h: 7, crys: [BLU, RED], turns: [2, 3], walls: 4, decoy: 1, cross: 1 },
+  { w: 7, h: 7, crys: [RED, GRN, BLU], turns: [1, 2], walls: 4, decoy: 1, minPar: 5 },
+  { w: 7, h: 8, crys: [RED, GRN, BLU], turns: [2, 2], walls: 5, fixed: 1, decoy: 1 },
+  { w: 6, h: 6, crys: [YEL], turns: [1, 1], walls: 1, tip: 'mix' },
+  { w: 6, h: 6, crys: [MAG], turns: [1, 2], walls: 2, minPar: 3, tip: 'magenta' },
+  { w: 7, h: 7, crys: [CYA, RED], turns: [1, 1], walls: 3, tip: 'cyan' },
+  { w: 7, h: 7, crys: [YEL, BLU], turns: [1, 2], walls: 3, minPar: 4, tip: 'wrong' },
+  { w: 7, h: 7, crys: [MAG, GRN], turns: [2, 2], walls: 4, fixed: 1, decoy: 1 },
+  { w: 7, h: 8, crys: [YEL, CYA], turns: [1, 2], walls: 4, decoy: 1, minPar: 5 },
+  { w: 7, h: 8, crys: [MAG, YEL], turns: [1, 2], walls: 5, fixed: 1, minPar: 5 },
+  { w: 8, h: 8, crys: [CYA, MAG], turns: [2, 2], walls: 5, fixed: 2, decoy: 1 },
+  { w: 8, h: 8, crys: [YEL, CYA, BLU], turns: [1, 2], walls: 6, fixed: 1, decoy: 1, minPar: 6 },
+  { w: 8, h: 8, crys: [YEL, MAG, CYA], turns: [1, 2], walls: 6, fixed: 2, decoy: 2, minPar: 6 },
+  { w: 7, h: 7, crys: [RED, BLU], turns: [2, 2], walls: 3, filters: 2, needFilter: true, tip: 'filter' },
+  { w: 7, h: 7, crys: [WHT], turns: [1, 1], walls: 3, tip: 'white' },
+  { w: 7, h: 8, crys: [WHT], turns: [1, 2], walls: 4, filters: 1, minPar: 5 },
+  { w: 8, h: 8, crys: [YEL, GRN], turns: [1, 2], walls: 5, filters: 2, decoy: 1, minPar: 5 },
+  { w: 8, h: 8, crys: [WHT, RED], turns: [1, 2], walls: 5, fixed: 1, decoy: 1, minPar: 5 },
+  { w: 8, h: 8, crys: [MAG, CYA], turns: [2, 2], walls: 6, filters: 2, fixed: 2 },
+  { w: 8, h: 9, crys: [WHT, BLU], turns: [1, 2], walls: 6, filters: 1, fixed: 1, decoy: 2, minPar: 6 },
+  { w: 8, h: 9, crys: [YEL, MAG, CYA], turns: [1, 2], walls: 7, filters: 2, fixed: 2, decoy: 2, minPar: 6 },
+  { w: 9, h: 9, crys: [WHT, YEL], turns: [1, 2], walls: 7, filters: 2, fixed: 2, decoy: 2, minPar: 6 },
+  { w: 9, h: 9, crys: [WHT, MAG, GRN], turns: [1, 2], walls: 8, filters: 3, fixed: 3, decoy: 3, minPar: 7, tip: 'final' },
+];
+
+// ---- The light: one beam per lens, traced cell by cell -----------------------------------
+/** Traces every beam on board lv with the player's mirrors placed (0, 1 '/', 2 '\' per cell). */
+function simulate(lv, placed) {
+  const { w, h, tile } = lv, N = w * h;
+  const recv = new Uint8Array(N), beams = [], flashes = [], stops = [];
+  for (let e = 0; e < N; e++) {
+    const em = tile[e]; if (!em || em.t !== 'emit') continue;
+    let x = e % w, y = (e / w) | 0, d = em.d; const c = em.c;
+    const pts = [[x + 0.5, y + 0.5]], seen = new Set();
+    for (let guard = 0; guard < 4 * N + 8; guard++) {
+      const dx = DIRS[d][0], dy = DIRS[d][1], nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) { pts.push([x + 0.5 + dx * 0.5, y + 0.5 + dy * 0.5]); break; }
+      x = nx; y = ny;
+      const i = y * w + x, t = tile[i];
+      const m = placed[i] || (t && t.t === 'fixed' ? t.m : 0);
+      if (m) {
+        pts.push([x + 0.5, y + 0.5]);
+        if (seen.has(i * 4 + d)) break; // a loop: never happens from a lens, kept as a guard
+        seen.add(i * 4 + d); flashes.push({ x: x + 0.5, y: y + 0.5, c }); d = REF[m][d]; continue;
+      }
+      if (!t) continue;
+      if (t.t === 'crys') { pts.push([x + 0.5, y + 0.5]); recv[i] |= c; break; }
+      if (t.t === 'filter' && t.c === c) continue;
+      const f = t.t === 'filter' ? 0.36 : t.t === 'emit' ? 0.3 : 0.44; // ends on the face it hit
+      const p = [x + 0.5 - dx * f, y + 0.5 - dy * f]; pts.push(p); stops.push({ x: p[0], y: p[1], c }); break;
+    }
+    let len = 0; for (let k = 1; k < pts.length; k++) len += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
+    beams.push({ c, pts, len });
+  }
+  const crys = []; let lit = 0, wrong = 0;
+  for (let i = 0; i < N; i++) {
+    const t = tile[i]; if (!t || t.t !== 'crys') continue;
+    const r = recv[i], st = r === t.need ? 'lit' : (r & ~t.need) ? 'wrong' : r ? 'part' : 'off';
+    if (st === 'lit') lit++; if (st === 'wrong') wrong++;
+    crys.push({ i, st, r, need: t.need });
+  }
+  return { beams, flashes, stops, recv, crys, lit, wrong, total: crys.length, solved: crys.length > 0 && lit === crys.length };
+}
+
+// ---- The solver: proves no answer uses fewer mirrors than par -----------------------------
+/** True if at most `budget` player mirrors can light every crystal; null if it gave up.
+ *  Lenses are traced in turn and each empty cell a beam reaches is decided once (pass, '/', '\'),
+ *  so every useful placement is tried. Each lens must end in a crystal that wants its colour
+ *  (the generator makes one lens per crystal colour), which prunes most branches. */
+function solvable(lv, budget, maxNodes = 200000) {
+  const { w, h, tile } = lv, N = w * h, lens = [], recv = new Uint8Array(N), dec = new Uint8Array(N);
+  for (let i = 0; i < N; i++) if (tile[i] && tile[i].t === 'emit') lens.push(i);
+  let nodes = 0;
+  const allLit = () => tile.every((t, i) => !t || t.t !== 'crys' || recv[i] === t.need);
+  function run(k, x, y, d, cost) {
+    if (++nodes > maxNodes) throw 0;
+    const c = tile[lens[k]].c;
+    for (let g = 0; g < 4 * N; g++) {
+      x += DIRS[d][0]; y += DIRS[d][1];
+      if (x < 0 || y < 0 || x >= w || y >= h) return false;
+      const i = y * w + x, t = tile[i];
+      if (t) {
+        if (t.t === 'fixed') { d = REF[t.m][d]; continue; }
+        if (t.t === 'filter' && t.c === c) continue;
+        if (t.t !== 'crys' || !(t.need & c)) return false;
+        const old = recv[i]; recv[i] |= c;
+        const ok = k + 1 === lens.length ? allLit() : run(k + 1, lens[k + 1] % w, (lens[k + 1] / w) | 0, tile[lens[k + 1]].d, cost);
+        recv[i] = old; return ok;
+      }
+      if (dec[i] === 3) continue;
+      if (dec[i]) { d = REF[dec[i]][d]; continue; }
+      for (const m of cost < budget ? [3, 1, 2] : [3]) {
+        dec[i] = m;
+        const ok = run(k, x, y, m === 3 ? d : REF[m][d], cost + (m === 3 ? 0 : 1));
+        dec[i] = 0; if (ok) return true;
+      }
+      return false;
+    }
+    return false;
+  }
+  try { return run(0, lens[0] % w, (lens[0] / w) | 0, tile[lens[0]].d, 0); } catch (e) { return null; }
+}
+
+// ---- The generator: builds each board backwards from its crystals ------------------------
+function shuffle(a, r) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+/** One try at a board for spec; returns a level or null. Every path is a light route from a
+ *  lens to its crystal; mirror cells are never crossed by another beam, so the solution holds. */
+function tryGen(spec, r) {
+  const { w, h } = spec, N = w * h;
+  const tile = new Array(N).fill(null);
+  const pass = new Uint8Array(N), passColor = new Uint8Array(N), passCount = new Uint8Array(N);
+  const sol = new Int8Array(N), paths = []; // paths: each light route's mirror cells
+  const isFree = i => !tile[i] && !pass[i] && !sol[i];
+  const maxSeg = tune.maxSegment;
+  function walkOut(start, d, turns, c) {
+    const temp = new Set([start]), cells = [], mirrors = [];
+    let x = start % w, y = (start / w) | 0;
+    for (let t = 0; ; t++) {
+      const axis = d % 2 === 0 ? 1 : 2, run = [];
+      let cx = x, cy = y;
+      for (;;) {
+        cx += DIRS[d][0]; cy += DIRS[d][1];
+        if (cx < 0 || cy < 0 || cx >= w || cy >= h) break;
+        const i = cy * w + cx;
+        if (tile[i] || sol[i] || temp.has(i)) break;
+        run.push(i);
+        if (run.length >= maxSeg + 2) break;
+      }
+      const options = [];
+      for (let k = 0; k < run.length && k < maxSeg; k++) {
+        let ok = true;
+        for (let j = 0; j < k; j++) if (pass[run[j]] & axis) { ok = false; break; }
+        if (!ok) break;
+        if (!pass[run[k]]) options.push(k);
+      }
+      if (!options.length) return false;
+      const k = options[Math.floor(r() * options.length)];
+      for (let j = 0; j < k; j++) { cells.push([run[j], axis]); temp.add(run[j]); }
+      const end = run[k]; temp.add(end);
+      if (t === turns) { // the lens, facing back along the path toward the crystal
+        for (const [i, ax] of cells) { pass[i] |= ax; passColor[i] |= c; passCount[i]++; }
+        for (const [i, m] of mirrors) sol[i] = m;
+        paths.push(mirrors.map(m => m[0]));
+        tile[end] = { t: 'emit', c, d: (d + 2) % 4 };
+        return true;
+      }
+      const nd = r() < 0.5 ? (d + 1) % 4 : (d + 3) % 4;
+      mirrors.push([end, REF[1][d] === nd ? 1 : 2]);
+      d = nd; x = end % w; y = (end / w) | 0;
+    }
+  }
+  for (const need of spec.crys) {
+    let ci = -1;
+    for (let k = 0; k < 60 && ci < 0; k++) { const i = Math.floor(r() * N); if (isFree(i)) ci = i; }
+    if (ci < 0) return null;
+    tile[ci] = { t: 'crys', need };
+    const dirs = shuffle([0, 1, 2, 3], r), comps = bitsOf(need);
+    for (let k = 0; k < comps.length; k++) {
+      const turns = spec.turns[0] + Math.floor(r() * (spec.turns[1] - spec.turns[0] + 1));
+      if (!walkOut(ci, dirs[k], turns, comps[k])) return null;
+    }
+  }
+  const solCells = shuffle([...Array(N).keys()].filter(i => sol[i]), r);
+  const left = paths.map(p => p.length), gold = new Set(); // gold never takes a route's last player mirror
+  for (const i of solCells) {
+    if (gold.size >= (spec.fixed || 0)) break;
+    const p = paths.findIndex(q => q.includes(i));
+    if (left[p] > 1) { left[p]--; gold.add(i); tile[i] = { t: 'fixed', m: sol[i] }; }
+  }
+  const playerSol = solCells.filter(i => !gold.has(i)).map(i => ({ i, m: sol[i] }));
+  if (playerSol.length < (spec.minPar || 1)) return null;
+  const freeCells = () => shuffle([...Array(N).keys()].filter(isFree), r);
+  let fc = freeCells();
+  for (let k = 0; k < (spec.walls || 0) && fc.length; k++) tile[fc.pop()] = { t: 'wall' };
+  const lit0 = new Set(); // free cells a beam crosses before the first move: decoys go there, so they bend it
+  for (let e = 0; e < N; e++) {
+    const em = tile[e]; if (!em || em.t !== 'emit') continue;
+    let x = e % w, y = (e / w) | 0, d = em.d;
+    for (let g = 0; g < 4 * N; g++) {
+      x += DIRS[d][0]; y += DIRS[d][1];
+      if (x < 0 || y < 0 || x >= w || y >= h) break;
+      const i = y * w + x, t = tile[i];
+      if (!t) { lit0.add(i); continue; }
+      if (t.t === 'fixed') { d = REF[t.m][d]; continue; }
+      break;
+    }
+  }
+  fc = freeCells().filter(i => lit0.has(i));
+  for (let k = 0; k < (spec.decoy || 0) && fc.length; k++) tile[fc.pop()] = { t: 'fixed', m: r() < 0.5 ? 1 : 2, decoy: true };
+  const filterCells = shuffle([...Array(N).keys()].filter(i => !tile[i] && !sol[i] && passCount[i] === 1), r);
+  if (filterCells.length < (spec.filters || 0)) return null; // every glass the level promises
+  for (let k = 0; k < (spec.filters || 0); k++) tile[filterCells[k]] = { t: 'filter', c: passColor[filterCells[k]] };
+  const lv = { w, h, tile, sol: playerSol, par: playerSol.length, spec };
+  const solved = new Int8Array(N); for (const s of playerSol) solved[s.i] = s.m;
+  if (!simulate(lv, solved).solved) return null;
+  if (simulate(lv, new Int8Array(N)).crys.some(c => c.r & c.need)) return null; // no crystal gets any of its colours before the first move
+  if (spec.cross) { // the answer's beams cross (pass 3: a horizontal and a vertical route share the cell)
+    let n = 0; for (let i = 0; i < N; i++) if (pass[i] === 3 && !tile[i]) n++;
+    if (n < spec.cross) return null;
+  }
+  if (solvable(lv, lv.par - 1) !== false) return null; // par must be the fewest mirrors (null: not proven)
+  if (spec.needFilter && solvable({ ...lv, tile: tile.map(t => (t && t.t === 'filter' ? null : t)) }, lv.par - 1) !== true) return null; // the glass blocks a shorter way
+  return lv;
+}
+/** The same board mirrored left to right ('/' and '\' swap). */
+function flipX(lv) {
+  const { w, h } = lv, j = i => ((i / w) | 0) * w + (w - 1 - i % w), tile = new Array(w * h).fill(null);
+  lv.tile.forEach((t, i) => {
+    if (!t) return;
+    const u = { ...t };
+    if (u.t === 'emit' && u.d % 2 === 0) u.d = 2 - u.d;
+    if (u.t === 'fixed') u.m = 3 - u.m;
+    tile[j(i)] = u;
+  });
+  return { ...lv, tile, sol: lv.sol.map(q => ({ i: j(q.i), m: 3 - q.m })) };
+}
+/** A solvable board for spec from seed s. If every try fails it first drops the extra rules and
+ *  one mirror of minPar, and only then falls back to a plain board (lv.relaxed says which). */
+function generate(spec, s) {
+  const tries = tune.genAttempts;
+  const tiers = [spec,
+    { ...spec, cross: 0, needFilter: false, minPar: Math.max(1, (spec.minPar || 1) - 1) },
+    { ...spec, walls: 0, decoy: 0, filters: 0, fixed: 0, cross: 0, needFilter: false, minPar: 1, turns: [1, 1] }];
+  let lv = null;
+  for (let k = 0; k < tiers.length && !lv; k++) {
+    for (let a = 0; a < tries && !lv; a++) lv = tryGen(tiers[k], makeRng(s * 31 + a * 7919 + 17 + k * 104729));
+    if (lv && k) lv.relaxed = k;
+  }
+  for (let a = 1; !lv; a++) { lv = tryGen({ w: 5, h: 5, crys: [RED], turns: [1, 1] }, makeRng(a)); if (lv) lv.relaxed = 3; }
+  return spec.firstTurn && lv.sol[0].m !== spec.firstTurn ? flipX(lv) : lv;
+}
+
+// ---- Scenes and state -------------------------------------------------------------------
+let scene, state;
+const ui = { buttons: [], focus: 0 };
+const fx = []; // particles: light sparks
+const STARS = Array.from({ length: 150 }, (_, k) => {
+  const r = makeRng(9000 + k);
+  return { x: r(), y: Math.pow(r(), 1.4) * 0.8, s: 0.5 + r() * 1.6, sp: 0.6 + r() * 2.2, ph: r() * 6.28 };
+});
+const THEMES = [ // sky: top, middle, bottom, horizon glow, glow strength, star strength, hills
+  { top: [4, 7, 22], mid: [10, 16, 48], bot: [22, 26, 72], glow: [70, 80, 180], ga: 0.10, st: 1.0, h1: [12, 14, 40], h2: [8, 10, 28] },
+  { top: [5, 12, 36], mid: [16, 34, 86], bot: [44, 72, 142], glow: [110, 170, 255], ga: 0.28, st: 0.6, h1: [16, 26, 62], h2: [10, 16, 42] },
+  { top: [16, 11, 42], mid: [62, 30, 86], bot: [172, 82, 92], glow: [255, 160, 90], ga: 0.55, st: 0.28, h1: [44, 22, 60], h2: [26, 14, 40] },
+  { top: [12, 20, 56], mid: [64, 58, 128], bot: [236, 146, 112], glow: [255, 204, 128], ga: 0.7, st: 0.12, h1: [52, 36, 82], h2: [32, 22, 56] },
+];
+const sky = { cur: JSON.parse(JSON.stringify(THEMES[0])), sun: 0.08, sunTarget: 0.08 };
+let menuClock = 0; // the title and level screens animate on their own clock, advanced by the step
+const solvedCount = () => Object.keys(save.stars).filter(k => save.stars[k] > 0 && +k < LEVELS.length).length;
+const starCount = () => Object.keys(save.stars).reduce((s, k) => s + (+k < LEVELS.length ? save.stars[k] : 0), 0);
+const unlocked = i => i === 0 || !!save.stars[i - 1] || !!save.stars[i];
+function nextLevel() { for (let i = 0; i < LEVELS.length; i++) if (!save.stars[i]) return i; return LEVELS.length - 1; }
+function todayKey() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function titleTheme() { const n = solvedCount(); return n >= LEVELS.length ? 3 : Math.min(2, Math.floor(n / 10)); }
+function goScene(s, focus = 0) { scene = s; ui.focus = focus; }
+
+function reset() { // a fresh run of the current puzzle (or the first one)
+  seed = Number(params.get('seed')) || CONFIG.seed;
+  if (state && state.lv) startPuzzle(state.mode, state.li); else startPuzzle('campaign', nextLevel());
+}
+/** Starts a puzzle: mode campaign (li = level index), daily, or endless (li = puzzle number). */
+const DAILY_WEEK = [6, 8, 14, 16, 18, 23, 27]; // rules of these campaign levels, Monday (easy) to Sunday (hard)
+function startPuzzle(mode, li = 0) {
+  let spec, s, name, sub, theme, dayKey = null;
+  if (mode === 'daily') {
+    const key = todayKey(), n = +key.replace(/-/g, ''), [yy, mm, dd] = key.split('-').map(Number);
+    const wd = (new Date(yy, mm - 1, dd).getDay() + 6) % 7;
+    spec = LEVELS[Math.min(DAILY_WEEK[wd], Math.max(3, nextLevel() - 1))]; // never rules the player has not met yet
+    s = n; dayKey = key; name = 'Tagesrätsel'; sub = key.split('-').reverse().join('.'); theme = 3; li = 0;
+  } else if (mode === 'endless') {
+    li = Math.max(0, li | 0);
+    let k = Math.min(LEVELS.length - 1, tune.endlessStart + li * tune.endlessRamp);
+    while (LEVELS[k].tip && k < LEVELS.length - 1) k++; // tutorials teach one idea; endless skips them
+    spec = LEVELS[k];
+    s = 50000 + li * 7717 + CONFIG.seed; name = `Endlos · Rätsel ${li + 1}`; sub = `${save.endless || 0} gelöst`; theme = 3;
+  } else {
+    li = clamp(li | 0, 0, LEVELS.length - 1); spec = LEVELS[li];
+    s = CONFIG.seed * 100003 + li * 7919 + 11;
+    const ch = CHAPTERS[Math.floor(li / 10)];
+    name = `Level ${li + 1}`; sub = `Kapitel ${Math.floor(li / 10) + 1} · ${ch.name}`; theme = ch.theme;
+  }
+  const lv = generate(spec, s);
+  state = {
+    t: 0, score: 0, gained: '', mode, li, lv, name, sub, theme, dayKey,
+    placed: new Int8Array(lv.w * lv.h), undo: [], hint: null, hintsUsed: 0, hintFlash: 0,
+    cur: { x: Math.floor(lv.w / 2), y: Math.floor(lv.h / 2) }, showCursor: false,
+    won: false, winT: 0, resT: 0, stars: 0, used: 0, invShake: 0, tileShake: { i: -1, t: 0 },
+    glow: new Float32Array(lv.w * lv.h), tip: mode === 'campaign' ? TIPS[spec.tip] || '' : '',
+    inventory: lv.par + tune.spareMirrors, sounded: 0, L: null,
+  };
+  if (mode === 'campaign' && li === 0) state.hint = { ...lv.sol[0], free: true }; // the first move is shown
+  state.sim = simulate(lv, state.placed);
+  fx.length = 0; goScene('play');
+  events.push({ type: 'start', mode, level: li, par: lv.par, relaxed: !!lv.relaxed });
+}
+const countUsed = () => state.placed.reduce((n, v) => n + (v ? 1 : 0), 0);
+function pushUndo() { state.undo.push(state.placed.slice()); if (state.undo.length > 300) state.undo.shift(); }
+/** Cycles one cell: empty -> '/' -> '\' -> empty. remove=true empties it at once. */
+function cycleCell(i, remove = false) {
+  const lv = state.lv; if (state.won || i < 0 || i >= lv.w * lv.h) return;
+  const x = i % lv.w;
+  if (lv.tile[i]) { state.tileShake = { i, t: 0.35 }; SFX.deny(); return; }
+  const v = state.placed[i];
+  if (remove) { if (!v) return; pushUndo(); state.placed[i] = 0; SFX.remove(); }
+  else if (!v) {
+    if (countUsed() >= state.inventory) { state.invShake = 0.5; SFX.deny(); buzz(30); return; }
+    pushUndo(); state.placed[i] = 1; SFX.place(x); buzz(8); sparkle(i, 6);
+  } else if (v === 1) { pushUndo(); state.placed[i] = 2; SFX.turn(x); buzz(6); sparkle(i, 4); }
+  else { pushUndo(); state.placed[i] = 0; SFX.remove(); }
+  afterMove();
+}
+function afterMove() {
+  const before = new Map(state.sim.crys.map(c => [c.i, c]));
+  state.sim = simulate(state.lv, state.placed);
+  state.used = countUsed();
+  for (const c of state.sim.crys) {
+    const was = before.get(c.i) || { st: 'off', r: 0 }, gained = c.r & ~was.r;
+    if (c.st === 'lit' && was.st !== 'lit') { SFX.crystal(c.need); burst(c.i, c.need, tune.sparkBurst); }
+    else if (c.st === 'part' && gained) { SFX.part(gained); burst(c.i, gained, 6); } // one colour of the mix arrived
+    else if (c.st === 'wrong' && was.st !== 'wrong') { SFX.wrong(); state.tileShake = { i: c.i, t: 0.35 }; }
+  }
+  if (state.sim.solved && !state.won) {
+    state.won = true; state.winT = 0;
+    let st = 3;
+    if (state.used > state.lv.par) st -= tune.overParStarCost;
+    st -= state.hintsUsed * tune.hintStarCost;
+    state.stars = clamp(st, 1, 3);
+    SFX.win(); buzz(40);
+    for (const c of state.sim.crys) burst(c.i, c.need, Math.round(tune.sparkBurst / 2));
+    recordWin();
+    events.push({ type: 'solved', mode: state.mode, level: state.li, stars: state.stars, used: state.used, par: state.lv.par });
+  }
+}
+function recordWin() {
+  if (state.mode === 'campaign') save.stars[state.li] = Math.max(save.stars[state.li] || 0, state.stars);
+  else if (state.mode === 'daily') { const k = state.dayKey || todayKey(); save.daily[k] = Math.max(save.daily[k] || 0, state.stars); }
+  else if (state.li >= (save.endless || 0)) save.endless = state.li + 1; // replaying an old one adds nothing
+  state.score = state.stars; state.gained = `${state.stars} Sterne`;
+  persist();
+}
+function useHint() {
+  if (state.won) return;
+  const lv = state.lv, h = state.hint;
+  if (h && (h.m ? state.placed[h.i] !== h.m : state.placed[h.i])) { SFX.hint(); state.hintFlash = 1; return; } // the shown one still stands: free
+  if (state.hintsUsed >= tune.maxHints) { SFX.deny(); return; }
+  const next = lv.sol.find(s => state.placed[s.i] !== s.m);
+  if (next) {
+    state.hint = { ...next };
+    if (!state.placed[next.i] && countUsed() >= state.inventory) { // no mirror left: also mark one that has to come off
+      const solSet = new Set(lv.sol.map(s => s.i));
+      state.hint.spare = [...state.placed.keys()].find(i => state.placed[i] && !solSet.has(i));
+    }
+  } else { // every solution mirror is set: an extra one is in the way
+    const solSet = new Set(lv.sol.map(s => s.i));
+    const extra = [...state.placed.keys()].find(i => state.placed[i] && !solSet.has(i));
+    state.hint = extra === undefined ? null : { i: extra, m: 0 };
+  }
+  if (state.hint) { state.hintsUsed++; state.hintFlash = 1; SFX.hint(); }
+}
+function undoMove() { if (state.won || !state.undo.length) { SFX.deny(); return; } state.placed = state.undo.pop(); SFX.remove(); afterMove(); }
+function restartBoard() { if (state.won || !countUsed()) return; pushUndo(); state.placed = new Int8Array(state.placed.length); SFX.remove(); afterMove(); }
+function toMenu() { if (state && state.mode === 'campaign') goScene('levels', state.li); else goScene('title'); }
+function goNext() {
+  if (state.mode === 'campaign') {
+    if (state.li >= LEVELS.length - 1) { goScene('title'); return; }
+    startPuzzle('campaign', state.li + 1);
+  } else if (state.mode === 'endless') startPuzzle('endless', save.endless || 0);
+  else goScene('title');
+}
+
+// ---- Particles -------------------------------------------------------------------------
+function cellCenter(i) { const L = state.L || playLayout(); const w = state.lv.w; return [L.bx + (i % w + 0.5) * L.cs, L.by + (((i / w) | 0) + 0.5) * L.cs, L.cs]; }
+function burst(i, mask, n) {
+  const [x, y, cs] = cellCenter(i), cols = mask === WHT ? [1, 2, 4, 7] : mask & (mask - 1) ? [...bitsOf(mask), mask] : [mask];
+  for (let k = 0; k < n; k++) {
+    const a = rng() * Math.PI * 2, v = cs * (1.2 + rng() * 3.2);
+    fx.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0, max: 0.7 + rng() * 0.9, c: cols[k % cols.length], s: cs * (0.08 + rng() * 0.1) });
+  }
+  fx.push({ ring: true, x, y, life: 0, max: 0.8, c: mask, s: cs });
+}
+function sparkle(i, n) {
+  const [x, y, cs] = cellCenter(i);
+  for (let k = 0; k < n; k++) {
+    const a = rng() * Math.PI * 2, v = cs * (0.6 + rng() * 1.2);
+    fx.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0, max: 0.35 + rng() * 0.3, c: 7, s: cs * 0.06 });
+  }
+}
+function updateFx(dt) {
+  for (let k = fx.length - 1; k >= 0; k--) {
+    const p = fx[k]; p.life += dt;
+    if (p.life >= p.max) { fx.splice(k, 1); continue; }
+    if (!p.ring) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 1 - 2.2 * dt; p.vy = p.vy * (1 - 2.2 * dt) + 30 * dt; }
+  }
+}
+function drawFx() {
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (const p of fx) {
+    const f = p.life / p.max;
+    if (p.ring) { ctx.strokeStyle = css(CRGB[p.c], 0.7 * (1 - f)); ctx.lineWidth = p.s * 0.08 * (1 - f) + 1; ctx.beginPath(); ctx.arc(p.x, p.y, p.s * (0.3 + 1.4 * ease(f)), 0, Math.PI * 2); ctx.stroke(); }
+    else glow(p.x, p.y, p.s * (1 - f * 0.6) * 2.2, p.c, 1 - f);
+  }
+  ctx.restore();
+}
+
+// ---- Drawing: light sprites, sky, board, figures ----------------------------------------
+const SPR = {};
+function glowSprite(key) {
+  if (SPR[key]) return SPR[key];
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'), col = key === 'sun' ? [255, 190, 120] : CRGB[key] || [255, 255, 255];
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.22, css(col, 0.9));
+  gr.addColorStop(0.55, css(col, 0.25)); gr.addColorStop(1, css(col, 0));
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64); SPR[key] = c; return c;
+}
+function glow(x, y, r, key, a = 1) {
+  if (a <= 0 || r <= 0) return;
+  const pa = ctx.globalAlpha;
+  ctx.globalAlpha = pa * Math.min(1, a); ctx.drawImage(glowSprite(key), x - r, y - r, r * 2, r * 2); ctx.globalAlpha = pa;
+}
+const isFinalWin = () => scene === 'results' && state && state.mode === 'campaign' && state.li === LEVELS.length - 1;
+function skyTarget() {
+  if (isFinalWin()) return 3; // the last level brings the dawn sky
+  if ((scene === 'play' || scene === 'results') && state) return state.theme;
+  return titleTheme();
+}
+function updateSky(dt) {
+  const tg = THEMES[skyTarget()], f = 1 - Math.exp(-tune.skyBlend * dt);
+  for (const k of Object.keys(tg)) {
+    if (Array.isArray(tg[k])) sky.cur[k] = sky.cur[k].map((v, j) => v + (tg[k][j] - v) * f);
+    else sky.cur[k] += (tg[k] - sky.cur[k]) * f;
+  }
+  let st = 0.06;
+  if (scene === 'title' || scene === 'levels') st = 0.12 + 0.62 * solvedCount() / LEVELS.length;
+  if (scene === 'results') st = state.mode === 'campaign' && state.li === LEVELS.length - 1 ? 0.95 : 0.5;
+  if (scene === 'play' && state && state.won) st = 0.35;
+  sky.sunTarget = st;
+  sky.sun += (sky.sunTarget - sky.sun) * (1 - Math.exp(-1.6 * dt));
+}
+/** The sun: slowly turning rays (alpha ra) around a warm gradient disc. */
+function drawSunDisc(sx, sy, sr, t, ra) {
+  ctx.save(); ctx.translate(sx, sy); ctx.rotate(t * 0.05);
+  ctx.fillStyle = `rgba(255,220,160,${ra})`;
+  for (let k = 0; k < 12; k++) { ctx.rotate(Math.PI / 6); ctx.beginPath(); ctx.moveTo(-sr * 0.12, 0); ctx.lineTo(0, -sr * 3.4); ctx.lineTo(sr * 0.12, 0); ctx.fill(); }
+  ctx.restore();
+  const sg = ctx.createRadialGradient(sx - sr * 0.3, sy - sr * 0.3, sr * 0.1, sx, sy, sr);
+  sg.addColorStop(0, '#fffbe8'); sg.addColorStop(0.55, '#ffd27a'); sg.addColorStop(1, '#ff8a5c');
+  ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(sx, sy, sr, 0, Math.PI * 2); ctx.fill();
+}
+function hillY(x, base, amp, ph) {
+  return base + Math.sin(x * 0.0045 + ph) * amp + Math.sin(x * 0.0113 + ph * 2.1) * amp * 0.45 + Math.sin(x * 0.031 + ph * 3.7) * amp * 0.12;
+}
+function hillPath(base, amp, ph) {
+  ctx.beginPath(); ctx.moveTo(0, H);
+  for (let x = 0; x <= W + 8; x += 8) ctx.lineTo(x, hillY(x, base, amp, ph));
+  ctx.lineTo(W, H); ctx.closePath();
+}
+function drawSky(t) {
+  const th = sky.cur;
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, css(th.top)); g.addColorStop(0.55, css(th.mid)); g.addColorStop(1, css(th.bot));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (const s of STARS) { // twinkling stars, small four-point glints for the bright ones
+    const a = th.st * (0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * s.sp + s.ph))) * (1 - s.y * 0.7);
+    if (a < 0.03) continue;
+    const x = s.x * W, y = s.y * H;
+    ctx.fillStyle = `rgba(220,230,255,${a})`;
+    if (s.s > 1.7) { ctx.beginPath(); ctx.moveTo(x, y - s.s * 2.2); ctx.lineTo(x + s.s * 0.5, y); ctx.lineTo(x, y + s.s * 2.2); ctx.lineTo(x - s.s * 0.5, y); ctx.closePath(); ctx.fill(); ctx.fillRect(x - s.s * 2, y - 0.4, s.s * 4, 0.8); }
+    else ctx.fillRect(x - s.s / 2, y - s.s / 2, s.s, s.s);
+  }
+  // the sun rises behind the hills as you bring light back
+  const sx = W * 0.5, sy = H * 1.02 - sky.sun * H * 0.5, sr = Math.min(W, H) * 0.09;
+  glow(sx, sy, sr * 6, 'sun', 0.25 + sky.sun * 0.5);
+  glow(sx, H * 0.98, Math.max(W, H) * 0.7, 'sun', 0.06 + th.ga * 0.28);
+  ctx.globalCompositeOperation = 'source-over';
+  drawSunDisc(sx, sy, sr, t, 0.05 + sky.sun * 0.1);
+  ctx.restore();
+  ctx.fillStyle = css(th.h1); hillPath(H * 0.84, H * 0.035, 1.3); ctx.fill();
+  ctx.fillStyle = css(th.h2); hillPath(H * 0.9, H * 0.03, 4.1); ctx.fill();
+  for (let k = 0; k < 9; k++) { // a few pines on the near hill
+    const x = ((k * 0.137 + 0.05) % 1) * W, base = hillY(x, H * 0.9, H * 0.03, 4.1) + 4, ph = H * (0.035 + (k % 3) * 0.012);
+    ctx.beginPath(); ctx.moveTo(x, base - ph); ctx.lineTo(x + ph * 0.32, base); ctx.lineTo(x - ph * 0.32, base); ctx.closePath(); ctx.fill();
+  }
+}
+
+/** Where the board, the tip and the buttons go: portrait, landscape, or short landscape (phones). */
+function playLayout() {
+  const lv = state.lv, land = W > H * 1.12, TIP_LH = 21;
+  const tipLines = (w, max) => state.tip ? Math.min(max, wrap(state.tip, Math.min(w, 640) - 28, 17, 500).length) : 0;
+  let cs, bx, by, tipBox, mode;
+  if (land && H < 560 && W >= H * 1.6) { // phone on its side: the board takes the full height, the tip sits right
+    mode = 'short';
+    ctx.font = `800 28px ${FONT}`; const nw = ctx.measureText(state.name).width; ctx.font = `600 16px ${FONT}`;
+    const left = Math.max(132, 18 + Math.max(nw, ctx.measureText(state.sub).width) + 24);
+    const rc = Math.min(260, Math.round(W * 0.26)), ay = 14, ah = H - 28, aw = W - left - rc - 28;
+    cs = Math.floor(Math.min(aw / lv.w, ah / lv.h, 100));
+    bx = Math.round(left + (aw - cs * lv.w) / 2); by = Math.round(ay + (ah - cs * lv.h) / 2);
+    const n = tipLines(rc, 8);
+    tipBox = { x: W - rc - 14, y: 96, w: rc, h: n * TIP_LH + 14, lines: 8 };
+  } else if (land) {
+    mode = 'land';
+    const top = 80, left = 132, aw = W - left - 28, n = tipLines(aw, 2);
+    const ay = n ? top + n * TIP_LH + 14 + 22 : 96, ah = H - ay - 20;
+    cs = Math.floor(Math.min(aw / lv.w, ah / lv.h, 100));
+    bx = Math.round(left + (aw - cs * lv.w) / 2); by = Math.round(ay + (ah - cs * lv.h) / 2);
+    tipBox = { x: left, y: top, w: aw, h: n * TIP_LH + 14, lines: 2 };
+  } else {
+    mode = 'port';
+    const top = 90, bottom = 112, n = tipLines(W - 36, 3);
+    const ay = n ? top + n * TIP_LH + 14 + 16 : 96, ah = H - ay - bottom - 12, aw = W - 28;
+    cs = Math.floor(Math.min(aw / lv.w, ah / lv.h, 100));
+    bx = Math.round((W - cs * lv.w) / 2); by = Math.round(ay + (ah - cs * lv.h) / 2);
+    tipBox = { x: 18, y: top, w: W - 36, h: n * TIP_LH + 14, lines: 3 };
+  }
+  return { cs, bx, by, bw: cs * lv.w, bh: cs * lv.h, tipBox, land, mode };
+}
+function cellAt(L, x, y) {
+  const lv = state.lv, cx = Math.floor((x - L.bx) / L.cs), cy = Math.floor((y - L.by) / L.cs);
+  return cx < 0 || cy < 0 || cx >= lv.w || cy >= lv.h ? -1 : cy * lv.w + cx;
+}
+
+function drawBoardBase(L) {
+  const lv = state.lv, { cs, bx, by, bw, bh } = L;
+  const wf = state.won ? (scene === 'results' ? 1 : ease(state.winT / 1.1)) : 0; // on a win the night glass clears
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
+  rr(bx - 14, by - 14, bw + 28, bh + 28, 22); ctx.fillStyle = `rgba(7,9,26,${0.78 - 0.33 * wf})`; ctx.fill();
+  ctx.restore();
+  if (wf > 0) { // ... and the rising sun shines through it
+    const sy = H * 1.02 - sky.sun * H * 0.5, sr = Math.min(W, H) * 0.09;
+    ctx.save(); rr(bx - 14, by - 14, bw + 28, bh + 28, 22); ctx.clip(); ctx.globalCompositeOperation = 'lighter';
+    glow(W / 2, sy, sr * 7, 'sun', 0.55 * wf); glow(W / 2, sy, sr * 2.2, 'sun', 0.5 * wf); ctx.restore();
+  }
+  rr(bx - 14, by - 14, bw + 28, bh + 28, 22); ctx.strokeStyle = 'rgba(170,190,255,0.20)'; ctx.lineWidth = 1.5; ctx.stroke();
+  const hov = pointer.inside && pointer.mouse ? cellAt(L, pointer.x, pointer.y) : -1;
+  for (let y = 0; y < lv.h; y++) for (let x = 0; x < lv.w; x++) {
+    const i = y * lv.w + x;
+    rr(bx + x * cs + 2.5, by + y * cs + 2.5, cs - 5, cs - 5, cs * 0.16);
+    ctx.fillStyle = i === hov && !lv.tile[i] && !state.won ? 'rgba(255,255,255,0.11)' : (x + y) % 2 ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.055)';
+    ctx.fill();
+  }
+}
+/** Beams with additive glow, light sparks flowing from each lens, flashes where they reflect. */
+function drawBeams(sim, L, t, alpha = 1) {
+  const g = tune.beamGlow, { cs, bx, by } = L;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const layers = [[0.66, 0.05], [0.36, 0.10], [0.17, 0.28], [0.06, 0.9]];
+  for (const b of sim.beams) {
+    const col = CRGB[b.c];
+    layers.forEach(([wf, a], li) => {
+      const core = li === 3, cc = core ? mix(col, [255, 255, 255], 0.55) : col;
+      ctx.strokeStyle = css(cc, Math.min(1, a * (core ? 1 : g)) * alpha);
+      ctx.lineWidth = Math.max(1.2, cs * wf * (core ? 1 : 0.7 + 0.3 * g));
+      ctx.beginPath(); b.pts.forEach((p, k) => { const X = bx + p[0] * cs, Y = by + p[1] * cs; k ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }); ctx.stroke();
+    });
+  }
+  const sp = tune.flowSpacing, v = tune.flowSpeed;
+  for (const b of sim.beams) {
+    const off = (t * v) % sp;
+    for (let d = off; d < b.len; d += sp) { const p = pointAt(b.pts, d); glow(bx + p[0] * cs, by + p[1] * cs, cs * 0.17, b.c, 0.85 * alpha); }
+  }
+  for (const f of sim.flashes) glow(bx + f.x * cs, by + f.y * cs, cs * 0.34, f.c, 0.55 * alpha);
+  for (const s of sim.stops) glow(bx + s.x * cs, by + s.y * cs, cs * (0.2 + 0.05 * Math.sin(t * 9 + s.x)), s.c, 0.6 * alpha);
+  ctx.restore();
+}
+function pointAt(pts, d) {
+  for (let k = 1; k < pts.length; k++) {
+    const a = pts[k - 1], b = pts[k], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (d <= l) { const f = l ? d / l : 0; return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]; }
+    d -= l;
+  }
+  return pts[pts.length - 1];
+}
+
+/** The lens: an octagonal housing, a nozzle toward its beam and a glowing coloured core. */
+function drawEmitter(cx, cy, s, c, d, t) {
+  const col = CRGB[c];
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(d * Math.PI / 2);
+  const ng = ctx.createLinearGradient(0, -s * 0.2, 0, s * 0.2);
+  ng.addColorStop(0, '#8d97bd'); ng.addColorStop(0.5, '#e6ebff'); ng.addColorStop(1, '#5b6488');
+  ctx.fillStyle = ng; ctx.beginPath();
+  ctx.moveTo(s * 0.12, -s * 0.18); ctx.lineTo(s * 0.47, -s * 0.12); ctx.lineTo(s * 0.47, s * 0.12); ctx.lineTo(s * 0.12, s * 0.18); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = css(col, 0.9); ctx.fillRect(s * 0.41, -s * 0.1, s * 0.06, s * 0.2);
+  const bg = ctx.createRadialGradient(-s * 0.1, -s * 0.1, s * 0.05, 0, 0, s * 0.36);
+  bg.addColorStop(0, '#5a6490'); bg.addColorStop(1, '#171b33');
+  ctx.fillStyle = bg; ctx.beginPath();
+  for (let k = 0; k < 8; k++) { const a = Math.PI / 8 + k * Math.PI / 4; ctx.lineTo(Math.cos(a) * s * 0.34, Math.sin(a) * s * 0.34); }
+  ctx.closePath(); ctx.fill(); ctx.strokeStyle = 'rgba(220,228,255,0.45)'; ctx.lineWidth = Math.max(1, s * 0.025); ctx.stroke();
+  ctx.strokeStyle = css(col, 0.55); ctx.lineWidth = Math.max(1, s * 0.03);
+  for (let k = 0; k < 4; k++) { const a = Math.PI / 4 + k * Math.PI / 2; ctx.beginPath(); ctx.moveTo(Math.cos(a) * s * 0.22, Math.sin(a) * s * 0.22); ctx.lineTo(Math.cos(a) * s * 0.29, Math.sin(a) * s * 0.29); ctx.stroke(); }
+  const pulse = 0.85 + 0.15 * Math.sin(t * 3.2 + cx * 0.01);
+  const lg = ctx.createRadialGradient(-s * 0.04, -s * 0.05, 0, 0, 0, s * 0.18);
+  lg.addColorStop(0, '#ffffff'); lg.addColorStop(0.4, css(mix(col, [255, 255, 255], 0.3))); lg.addColorStop(1, css(mix(col, [0, 0, 0], 0.35)));
+  ctx.fillStyle = lg; ctx.beginPath(); ctx.arc(0, 0, s * 0.17 * pulse, 0, Math.PI * 2); ctx.fill();
+  ctx.rotate(-d * Math.PI / 2); glyphPath(c, 0, 0, s * 0.075); ctx.fillStyle = 'rgba(20,16,40,0.78)'; ctx.fill(); // its colour's shape
+  ctx.restore();
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; glow(cx, cy, s * 0.42, c, 0.45 * pulse); ctx.restore();
+}
+/** Each primary colour also has a shape, for colour-blind players: red a triangle, green a square, blue a diamond. */
+function glyphPath(b, x, y, r) {
+  ctx.beginPath();
+  if (b === RED) { ctx.moveTo(x, y - r * 1.05); ctx.lineTo(x + r * 1.05, y + r * 0.8); ctx.lineTo(x - r * 1.05, y + r * 0.8); }
+  else if (b === GRN) { const q = r * 0.82; ctx.moveTo(x - q, y - q); ctx.lineTo(x + q, y - q); ctx.lineTo(x + q, y + q); ctx.lineTo(x - q, y + q); }
+  else { ctx.moveTo(x, y - r * 1.15); ctx.lineTo(x + r * 0.8, y); ctx.lineTo(x, y + r * 1.15); ctx.lineTo(x - r * 0.8, y); }
+  ctx.closePath();
+}
+const GEM = [[0, -0.40], [0.29, -0.17], [0.29, 0.15], [0, 0.38], [-0.29, 0.15], [-0.29, -0.17]];
+/** The crystal: a faceted gem in its colour; dark until its light arrives. The pips under it show
+ *  each colour it needs (filled once it arrives) and, crossed out, any colour that must not come in. */
+function drawCrystal(cx, cy, s, need, recv, st, lit, t, i) {
+  const col = CRGB[need], comps = bitsOf(need), extra = bitsOf(recv & ~need), k = 0.86;
+  if (st === 'wrong') cx += Math.sin(t * 46 + i) * s * 0.025;
+  const oy = -s * 0.07;
+  ctx.save(); ctx.translate(cx, cy + oy); ctx.scale(k, k);
+  if (lit > 0.01) {
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.rotate(t * 0.5);
+    ctx.fillStyle = css(col, 0.10 * lit);
+    for (let r = 0; r < 6; r++) { ctx.rotate(Math.PI / 3); ctx.beginPath(); ctx.moveTo(-s * 0.05, 0); ctx.lineTo(0, -s * 0.85); ctx.lineTo(s * 0.05, 0); ctx.fill(); }
+    ctx.restore();
+  }
+  const path = () => { ctx.beginPath(); GEM.forEach(([x, y], n) => n ? ctx.lineTo(x * s, y * s) : ctx.moveTo(x * s, y * s)); ctx.closePath(); };
+  const dark = [14, 16, 36];
+  const top = mix(mix(col, dark, 0.7), mix(col, [255, 255, 255], 0.5), lit), bot = mix(mix(col, dark, 0.85), col, lit);
+  const g = ctx.createLinearGradient(0, -s * 0.4, 0, s * 0.4); g.addColorStop(0, css(top)); g.addColorStop(1, css(bot));
+  path(); ctx.fillStyle = g; ctx.fill();
+  if (st === 'part' && recv) { path(); ctx.fillStyle = css(CRGB[recv] || col, 0.28 + 0.1 * Math.sin(t * 5)); ctx.fill(); }
+  ctx.strokeStyle = `rgba(255,255,255,${0.16 + 0.45 * lit})`; ctx.lineWidth = Math.max(1, s * 0.018);
+  const inner = GEM.map(([x, y]) => [x * 0.45 * s, (y * 0.45 - 0.04) * s]);
+  ctx.beginPath(); inner.forEach(([x, y], n) => n ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); ctx.stroke();
+  GEM.forEach(([x, y], n) => { ctx.beginPath(); ctx.moveTo(x * s, y * s); ctx.lineTo(inner[n][0], inner[n][1]); ctx.stroke(); });
+  ctx.fillStyle = `rgba(255,255,255,${0.12 + 0.35 * lit})`;
+  ctx.beginPath(); ctx.moveTo(inner[5][0], inner[5][1]); ctx.lineTo(inner[0][0], inner[0][1]); ctx.lineTo(0, -s * 0.4); ctx.lineTo(-s * 0.29, -s * 0.17); ctx.closePath(); ctx.fill();
+  path();
+  if (st === 'wrong') { ctx.strokeStyle = css(mix(col, [255, 255, 255], 0.3), 0.35 + 0.65 * Math.abs(Math.sin(t * 7))); ctx.lineWidth = Math.max(2, s * 0.05); }
+  else { ctx.strokeStyle = css(mix(col, [255, 255, 255], 0.2 * lit), 0.55 + 0.45 * lit); ctx.lineWidth = Math.max(1.5, s * 0.035); }
+  ctx.stroke();
+  ctx.restore();
+  // pips on a dark pill: needed colours (filled once they arrive), then foreign colours crossed out
+  const all = [...comps, ...extra], r = Math.max(s * 0.07, 3.5 / VK), gap = r * 2.9, py = cy + s * 0.37, w0 = (all.length - 1) * gap;
+  rr(cx - w0 / 2 - r * 1.7, py - r * 1.6, w0 + r * 3.4, r * 3.2, r * 1.6); ctx.fillStyle = 'rgba(6,8,24,0.82)'; ctx.fill();
+  all.forEach((b, n) => {
+    const px = cx - w0 / 2 + n * gap, has = recv & b, foreign = n >= comps.length;
+    glyphPath(b, px, py, r);
+    ctx.fillStyle = has ? css(CRGB[b]) : css(CRGB[b], 0.18); ctx.fill();
+    ctx.strokeStyle = css(CRGB[b], 0.95); ctx.lineWidth = Math.max(1.5, s * 0.03); ctx.stroke();
+    if (foreign) {
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(1.5, s * 0.025); ctx.beginPath();
+      ctx.moveTo(px - r * 1.2, py - r * 1.2); ctx.lineTo(px + r * 1.2, py + r * 1.2); ctx.moveTo(px + r * 1.2, py - r * 1.2); ctx.lineTo(px - r * 1.2, py + r * 1.2); ctx.stroke();
+    }
+  });
+  if (lit > 0.01) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; glow(cx, cy + oy, s * 0.95, need, 0.5 * lit * (0.85 + 0.15 * Math.sin(t * 2.4 + i))); ctx.restore(); }
+}
+/** A mirror bar: silver for yours, gold and bolted down for fixed ones, dashed for a hint. */
+function drawMirror(cx, cy, s, m, kind, t) {
+  ctx.save(); ctx.translate(cx, cy);
+  if (kind === 'fixed') {
+    rr(-s * 0.4, -s * 0.4, s * 0.8, s * 0.8, s * 0.12); ctx.fillStyle = 'rgba(255,196,110,0.07)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,200,120,0.28)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,214,150,0.55)';
+    for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { ctx.beginPath(); ctx.arc(x * s * 0.3, y * s * 0.3, s * 0.03, 0, Math.PI * 2); ctx.fill(); }
+  }
+  ctx.rotate(m === 1 ? -Math.PI / 4 : Math.PI / 4);
+  const len = s * 0.8, th = s * 0.13;
+  if (kind === 'ghost') {
+    const a = 0.75 + 0.25 * Math.sin(t * 5);
+    rr(-len / 2, -th / 2, len, th, th / 2); ctx.strokeStyle = 'rgba(4,8,24,0.8)'; ctx.lineWidth = Math.max(3, s * 0.08); ctx.stroke(); // dark under-stroke: readable over a beam
+    ctx.setLineDash([s * 0.08, s * 0.06]); ctx.strokeStyle = `rgba(200,255,255,${a})`; ctx.lineWidth = Math.max(1.5, s * 0.04);
+    rr(-len / 2, -th / 2, len, th, th / 2); ctx.stroke(); ctx.setLineDash([]); ctx.restore(); return;
+  }
+  const gold = kind === 'fixed';
+  const g = ctx.createLinearGradient(0, -th / 2, 0, th / 2);
+  if (gold) { g.addColorStop(0, '#7a4e10'); g.addColorStop(0.35, '#fff1b8'); g.addColorStop(0.6, '#e0b04a'); g.addColorStop(1, '#6a420c'); }
+  else { g.addColorStop(0, '#56658c'); g.addColorStop(0.35, '#f6f9ff'); g.addColorStop(0.6, '#b9c7e8'); g.addColorStop(1, '#4e5c82'); }
+  ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = s * 0.08; ctx.shadowOffsetY = s * 0.03;
+  rr(-len / 2, -th / 2, len, th, th / 2); ctx.fillStyle = g; ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = gold ? 'rgba(90,50,0,0.7)' : 'rgba(20,28,60,0.7)'; ctx.lineWidth = 1; ctx.stroke();
+  const sh = Math.sin(t * 1.4 + cx * 0.02 + cy * 0.013) * len * 0.32;
+  const sg = ctx.createLinearGradient(sh - len * 0.12, 0, sh + len * 0.12, 0);
+  sg.addColorStop(0, 'rgba(255,255,255,0)'); sg.addColorStop(0.5, 'rgba(255,255,255,0.75)'); sg.addColorStop(1, 'rgba(255,255,255,0)');
+  rr(-len / 2, -th / 2, len, th * 0.45, th / 3); ctx.fillStyle = sg; ctx.fill();
+  ctx.fillStyle = gold ? '#5a3a08' : '#263055'; ctx.beginPath(); ctx.arc(0, 0, th * 0.32, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = gold ? '#ffe7a0' : '#dfe7ff'; ctx.beginPath(); ctx.arc(-th * 0.06, -th * 0.06, th * 0.14, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+/** A stone wall: a bevelled block of two brick rows. */
+function drawWall(x, y, s) {
+  const p = s * 0.07, w = s - p * 2;
+  const g = ctx.createLinearGradient(x, y, x, y + s);
+  g.addColorStop(0, '#4a5274'); g.addColorStop(1, '#22263f');
+  rr(x + p, y + p, w, w, s * 0.1); ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = Math.max(1, s * 0.025);
+  ctx.beginPath();
+  ctx.moveTo(x + p, y + s / 2); ctx.lineTo(x + s - p, y + s / 2);
+  ctx.moveTo(x + s * 0.5, y + p); ctx.lineTo(x + s * 0.5, y + s / 2);
+  ctx.moveTo(x + s * 0.27, y + s / 2); ctx.lineTo(x + s * 0.27, y + s - p);
+  ctx.moveTo(x + s * 0.73, y + s / 2); ctx.lineTo(x + s * 0.73, y + s - p);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.13)';
+  ctx.beginPath(); ctx.moveTo(x + p + s * 0.08, y + p + 1.5); ctx.lineTo(x + s - p - s * 0.08, y + p + 1.5);
+  ctx.moveTo(x + p + s * 0.04, y + s / 2 + 2); ctx.lineTo(x + s - p - s * 0.04, y + s / 2 + 2); ctx.stroke();
+}
+/** Colour glass: a framed pane that lets only its own colour through. */
+function drawFilter(cx, cy, s, c, t) {
+  const col = CRGB[c], h = s * 0.36;
+  rr(cx - h, cy - h, h * 2, h * 2, s * 0.06); ctx.fillStyle = css(col, 0.22); ctx.fill();
+  ctx.strokeStyle = css(col, 0.85); ctx.lineWidth = Math.max(1.5, s * 0.035); ctx.stroke();
+  ctx.save(); rr(cx - h, cy - h, h * 2, h * 2, s * 0.06); ctx.clip();
+  const o = ((t * 0.25) % 1) * h * 4 - h * 2;
+  ctx.fillStyle = 'rgba(255,255,255,0.16)';
+  ctx.beginPath(); ctx.moveTo(cx - h + o, cy + h); ctx.lineTo(cx - h + o + h * 0.5, cy + h); ctx.lineTo(cx + o + h * 0.3, cy - h); ctx.lineTo(cx + o - h * 0.2, cy - h); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = '#dfe5ff'; ctx.lineWidth = Math.max(1.5, s * 0.03);
+  const q = h * 1.12, e = s * 0.12;
+  for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { ctx.beginPath(); ctx.moveTo(cx + sx * q, cy + sy * (q - e)); ctx.lineTo(cx + sx * q, cy + sy * q); ctx.lineTo(cx + sx * (q - e), cy + sy * q); ctx.stroke(); }
+  glyphPath(c, cx, cy, s * 0.1); ctx.fillStyle = css(col, 0.9); ctx.fill(); // its colour's shape
+}
+/** The hint marker: a pulsing plate with two ripples, cyan for "a mirror goes here", red for "take this one off". */
+function hintPlate(cx, cy, cs, t, rgb) {
+  const pulse = 0.5 + 0.5 * Math.sin(t * 5);
+  rr(cx - cs * 0.46, cy - cs * 0.46, cs * 0.92, cs * 0.92, cs * 0.16);
+  ctx.fillStyle = `rgba(${rgb},${0.10 + 0.08 * pulse})`; ctx.fill();
+  ctx.strokeStyle = `rgba(${rgb},${0.65 + 0.35 * pulse})`; ctx.lineWidth = Math.max(2, cs * 0.035); ctx.stroke();
+  for (let k = 0; k < 2; k++) {
+    const f = (t * 0.7 + k * 0.5) % 1;
+    ctx.strokeStyle = `rgba(${rgb},${0.55 * (1 - f)})`; ctx.lineWidth = Math.max(1.5, cs * 0.03 * (1 - f));
+    rr(cx - cs * (0.46 + 0.3 * f), cy - cs * (0.46 + 0.3 * f), cs * (0.92 + 0.6 * f), cs * (0.92 + 0.6 * f), cs * (0.16 + 0.15 * f)); ctx.stroke();
+  }
+}
+function drawTiles(L, t) {
+  const lv = state.lv, { cs, bx, by } = L, sim = state.sim;
+  const crysState = new Map(sim.crys.map(c => [c.i, c]));
+  for (let i = 0; i < lv.w * lv.h; i++) {
+    const tl = lv.tile[i], x = i % lv.w, y = (i / lv.w) | 0;
+    let cx = bx + (x + 0.5) * cs; const cy = by + (y + 0.5) * cs;
+    if (state.tileShake.i === i && state.tileShake.t > 0) cx += Math.sin(state.tileShake.t * 60) * cs * 0.05;
+    if (tl) {
+      if (tl.t === 'wall') drawWall(cx - cs / 2, cy - cs / 2, cs);
+      else if (tl.t === 'emit') drawEmitter(cx, cy, cs, tl.c, tl.d, t);
+      else if (tl.t === 'fixed') drawMirror(cx, cy, cs, tl.m, 'fixed', t);
+      else if (tl.t === 'filter') drawFilter(cx, cy, cs, tl.c, t);
+      else if (tl.t === 'crys') { const c = crysState.get(i); drawCrystal(cx, cy, cs, tl.need, c.r, c.st, state.glow[i], t, i); }
+    } else if (state.placed[i]) drawMirror(cx, cy, cs, state.placed[i], 'player', t);
+    const hn = state.hint;
+    if (hn && hn.i === i && !state.won && (hn.m ? state.placed[i] !== hn.m : state.placed[i])) {
+      hintPlate(cx, cy, cs, t, hn.m ? '150,255,255' : '255,150,150');
+      if (hn.m) drawMirror(cx, cy, cs, hn.m, 'ghost', t);
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; glow(cx, cy, cs * 0.6, CYA, 0.22 + 0.12 * Math.sin(t * 5)); ctx.restore();
+    }
+    if (hn && hn.spare === i && state.placed[i] && !state.won) hintPlate(cx, cy, cs, t, '255,150,150'); // this mirror has to come off
+  }
+  if (state.showCursor && !state.won) {
+    const { x, y } = state.cur;
+    ctx.strokeStyle = `rgba(255,255,255,${0.6 + 0.3 * Math.sin(t * 6)})`; ctx.lineWidth = 2.5;
+    rr(bx + x * cs + 3, by + y * cs + 3, cs - 6, cs - 6, cs * 0.16); ctx.stroke();
+  }
+}
+
+// ---- Icons and buttons, all drawn ----------------------------------------------------------
+function arrowArc(r, a0, a1, ccw) {
+  ctx.beginPath(); ctx.arc(0, 0, r, a0, a1, ccw); ctx.stroke();
+  const ex = Math.cos(a1) * r, ey = Math.sin(a1) * r, tx = ccw ? Math.sin(a1) : -Math.sin(a1), ty = ccw ? -Math.cos(a1) : Math.cos(a1);
+  const hs = r * 0.62, nx = Math.cos(a1), ny = Math.sin(a1);
+  ctx.beginPath(); ctx.moveTo(ex + tx * hs * 0.7, ey + ty * hs * 0.7);
+  ctx.lineTo(ex + nx * hs * 0.5 - tx * hs * 0.2, ey + ny * hs * 0.5 - ty * hs * 0.2);
+  ctx.lineTo(ex - nx * hs * 0.5 - tx * hs * 0.2, ey - ny * hs * 0.5 - ty * hs * 0.2); ctx.closePath(); ctx.fill();
+}
+function starPath(x, y, r) {
+  ctx.beginPath();
+  for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, q = k % 2 ? r * 0.45 : r; ctx.lineTo(x + Math.cos(a) * q, y + Math.sin(a) * q); }
+  ctx.closePath();
+}
+function icon(name, x, y, s, col) {
+  ctx.save(); ctx.translate(x, y); ctx.strokeStyle = col; ctx.fillStyle = col;
+  ctx.lineWidth = Math.max(2, s * 0.1); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const r = s * 0.5;
+  if (name === 'undo') { ctx.translate(0, r * 0.15); arrowArc(r * 0.55, 0.15 * Math.PI, -Math.PI, true); }
+  else if (name === 'reset') { arrowArc(r * 0.6, -0.4 * Math.PI, 1.25 * Math.PI, false); }
+  else if (name === 'hint') {
+    ctx.beginPath(); ctx.arc(0, -r * 0.14, r * 0.46, Math.PI * 0.75, Math.PI * 2.25);
+    ctx.lineTo(r * 0.17, r * 0.42); ctx.lineTo(-r * 0.17, r * 0.42); ctx.closePath(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-r * 0.17, r * 0.62); ctx.lineTo(r * 0.17, r * 0.62); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-r * 0.12, r * 0.05); ctx.lineTo(0, -r * 0.12); ctx.lineTo(r * 0.12, r * 0.05); ctx.stroke();
+  } else if (name === 'sound' || name === 'mute') {
+    ctx.beginPath(); ctx.moveTo(-r * 0.62, -r * 0.2); ctx.lineTo(-r * 0.3, -r * 0.2); ctx.lineTo(r * 0.05, -r * 0.52); ctx.lineTo(r * 0.05, r * 0.52); ctx.lineTo(-r * 0.3, r * 0.2); ctx.lineTo(-r * 0.62, r * 0.2); ctx.closePath(); ctx.fill();
+    if (name === 'sound') { for (const k of [0.32, 0.58]) { ctx.beginPath(); ctx.arc(r * 0.05, 0, r * k, -0.3 * Math.PI, 0.3 * Math.PI); ctx.stroke(); } }
+    else { ctx.beginPath(); ctx.moveTo(r * 0.28, -r * 0.24); ctx.lineTo(r * 0.72, r * 0.24); ctx.moveTo(r * 0.72, -r * 0.24); ctx.lineTo(r * 0.28, r * 0.24); ctx.stroke(); }
+  } else if (name === 'menu') {
+    for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { rr(a * r * 0.3 - r * 0.22, b * r * 0.3 - r * 0.22, r * 0.44, r * 0.44, r * 0.1); ctx.fill(); }
+  } else if (name === 'back') { ctx.beginPath(); ctx.moveTo(r * 0.2, -r * 0.5); ctx.lineTo(-r * 0.3, 0); ctx.lineTo(r * 0.2, r * 0.5); ctx.stroke(); }
+  else if (name === 'lock') {
+    ctx.beginPath(); ctx.arc(0, -r * 0.12, r * 0.3, Math.PI, 0); ctx.stroke();
+    rr(-r * 0.46, -r * 0.12, r * 0.92, r * 0.7, r * 0.12); ctx.fill();
+  } else if (name === 'check') { ctx.beginPath(); ctx.moveTo(-r * 0.45, 0); ctx.lineTo(-r * 0.1, r * 0.35); ctx.lineTo(r * 0.5, -r * 0.4); ctx.stroke(); }
+  else if (name === 'sun') {
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.3, 0, Math.PI * 2); ctx.fill();
+    for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; ctx.beginPath(); ctx.moveTo(Math.cos(a) * r * 0.45, Math.sin(a) * r * 0.45); ctx.lineTo(Math.cos(a) * r * 0.65, Math.sin(a) * r * 0.65); ctx.stroke(); }
+  } else if (name === 'loop') {
+    ctx.beginPath();
+    for (let k = 0; k <= 40; k++) { const a = k / 40 * Math.PI * 2; ctx.lineTo(Math.sin(a) * r * 0.62, Math.sin(a) * Math.cos(a) * r * 0.55); }
+    ctx.stroke();
+  } else if (name === 'mirror') { ctx.rotate(-Math.PI / 4); rr(-r * 0.62, -r * 0.13, r * 1.24, r * 0.26, r * 0.13); ctx.fill(); }
+  ctx.restore();
+}
+function inRect(p, b) { return p.x >= b.x && p.y >= b.y && p.x <= b.x + b.w && p.y <= b.y + b.h; }
+/** Draws a button and registers it for taps; o: primary, icon, iconLeft, size, focus, dim, r. */
+function button(x, y, w, h, label, action, o = {}) {
+  const b = { x, y, w, h, action, label };
+  ui.buttons.push(b);
+  const hov = pointer.inside && pointer.mouse && inRect(pointer, b), foc = !!o.focus;
+  ctx.save();
+  rr(x, y, w, h, o.r == null ? Math.min(h / 2, 18) : o.r);
+  if (o.primary) {
+    const g = ctx.createLinearGradient(x, y, x + w, y + h); g.addColorStop(0, '#ffc875'); g.addColorStop(1, '#ff7398');
+    ctx.fillStyle = g; ctx.shadowColor = 'rgba(255,140,120,0.55)'; ctx.shadowBlur = hov || foc ? 28 : 16;
+  } else if (o.solid) ctx.fillStyle = hov || foc ? 'rgba(46,50,104,0.9)' : 'rgba(16,18,50,0.74)'; // stays readable over the sun
+  else ctx.fillStyle = hov || foc ? 'rgba(255,255,255,0.17)' : 'rgba(255,255,255,0.085)';
+  ctx.fill(); ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = foc ? 'rgba(255,255,255,0.85)' : o.primary ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = foc ? 2.5 : 1.5; ctx.stroke();
+  const tc = o.primary ? '#2b0f2e' : o.dim ? 'rgba(238,241,255,0.45)' : '#eef1ff';
+  if (o.icon && label && o.iconLeft) {
+    ctx.font = `700 ${o.size || 20}px ${FONT}`;
+    const tw = ctx.measureText(label).width, isz = h * 0.42, gx = x + (w - (tw + isz + 12)) / 2;
+    icon(o.icon, gx + isz / 2, y + h / 2, isz, tc); text(label, gx + isz + 12, y + h / 2 + 1, o.size || 20, tc, 'left', 700);
+  } else if (o.icon && label) { icon(o.icon, x + w / 2, y + h * 0.37, h * 0.36, tc); text(label, x + w / 2, y + h * 0.78, o.size || 15, tc, 'center', 600); }
+  else if (o.icon) icon(o.icon, x + w / 2, y + h / 2, h * 0.5, tc);
+  else text(label, x + w / 2, y + h / 2 + 1, o.size || 20, tc, 'center', 700);
+  ctx.restore();
+  return b;
+}
+function smallStars(x, y, r, n) {
+  for (let k = 0; k < 3; k++) {
+    const sx = x + (k - 1) * r * 2.4;
+    starPath(sx, y, r);
+    if (k < n) { const g = ctx.createLinearGradient(sx, y - r, sx, y + r); g.addColorStop(0, '#fff3b0'); g.addColorStop(1, '#ffb347'); ctx.fillStyle = g; ctx.fill(); }
+    else { ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.2; ctx.stroke(); }
+  }
+}
+/** Keyboard focus among the scene's buttons: arrows move it, Enter or Space presses it. */
+function focusKeys(count, onPress) {
+  if (pressed('ArrowDown') || pressed('ArrowRight') || pressed('Tab')) { ui.focus = (ui.focus + 1) % count; SFX.click(); }
+  if (pressed('ArrowUp') || pressed('ArrowLeft')) { ui.focus = (ui.focus + count - 1) % count; SFX.click(); }
+  if (pressed('Enter') || pressed('Space') || pressed('NumpadEnter')) onPress(clamp(ui.focus, 0, count - 1));
+}
+
+// ---- The scenes -----------------------------------------------------------------------
+const TITLE_ACTS = [
+  () => startPuzzle('campaign', nextLevel()),
+  () => goScene('levels', nextLevel()),
+  () => startPuzzle('daily'),
+  () => startPuzzle('endless', save.endless || 0),
+];
+const scenes = {
+  figures: { // every piece side by side with its name, for the outline check (?scene=figures)
+    update(dt) { menuClock += dt; },
+    draw(t) {
+      drawSky(t); ui.buttons = [];
+      const items = [
+        ['Lichtquelle Rot', (x, y, s) => drawEmitter(x, y, s, RED, 0, t)],
+        ['Lichtquelle Grün', (x, y, s) => drawEmitter(x, y, s, GRN, 1, t)],
+        ['Lichtquelle Blau', (x, y, s) => drawEmitter(x, y, s, BLU, 3, t)],
+        ['Kristall Rot', (x, y, s) => drawCrystal(x, y, s, RED, 0, 'off', 0, t, 1)],
+        ['Kristall Gelb, leuchtet', (x, y, s) => drawCrystal(x, y, s, YEL, YEL, 'lit', 1, t, 2)],
+        ['Kristall Weiß, halb', (x, y, s) => drawCrystal(x, y, s, WHT, RED | BLU, 'part', 0.2, t, 3)],
+        ['Spiegel', (x, y, s) => drawMirror(x, y, s, 1, 'player', t)],
+        ['Fester Spiegel', (x, y, s) => drawMirror(x, y, s, 2, 'fixed', t)],
+        ['Mauer', (x, y, s) => drawWall(x - s / 2, y - s / 2, s)],
+        ['Farbglas Blau', (x, y, s) => drawFilter(x, y, s, BLU, t)],
+        ['Hinweis', (x, y, s) => drawMirror(x, y, s, 1, 'ghost', t)],
+        ['Kristall, falsche Farbe', (x, y, s) => drawCrystal(x, y, s, CYA, RED, 'wrong', 0, t, 4)],
+      ];
+      const cols = W > H ? 6 : 3, cw = (W - 40) / cols, s = Math.min(110, cw - 30), rh = s + 56;
+      text('New Dawn · Figuren', W / 2, 40, 26, '#fff', 'center', 800);
+      items.forEach(([name, fn], k) => {
+        const x = 20 + (k % cols + 0.5) * cw, y = 92 + Math.floor(k / cols) * rh + s / 2;
+        rr(x - s / 2, y - s / 2, s, s, s * 0.16); ctx.fillStyle = 'rgba(7,9,26,0.75)'; ctx.fill();
+        fn(x, y, s); text(name, x, y + s / 2 + 18, 15, '#dfe5ff', 'center', 600);
+      });
+    },
+  },
+  title: {
+    update(dt) { menuClock += dt; focusKeys(4, k => { SFX.click(); TITLE_ACTS[k](); }); },
+    draw(t) {
+      drawSky(t); ui.buttons = [];
+      // the game in one picture: three lenses feed one white crystal
+      const compact = H < 640, cx = W / 2;
+      const s = compact ? Math.max(36, H * 0.085) : Math.min(84, H * 0.11);
+      const cy = compact ? s * 1.9 : Math.max(130, H * 0.2);
+      const ex = Math.min(W * 0.36, 300), gy = cy - s * 1.3;
+      const k = s * 0.7, pic = { beams: [
+        { c: RED, pts: [[(cx - ex) / k, cy / k], [cx / k, cy / k]], len: ex / k },
+        { c: BLU, pts: [[(cx + ex) / k, cy / k], [cx / k, cy / k]], len: ex / k },
+        { c: GRN, pts: [[cx / k, gy / k], [cx / k, cy / k]], len: (cy - gy) / k },
+      ], flashes: [], stops: [] };
+      drawBeams(pic, { cs: k, bx: 0, by: 0 }, t, 0.9);
+      drawEmitter(cx - ex, cy, s * 0.8, RED, 0, t); drawEmitter(cx + ex, cy, s * 0.8, BLU, 2, t); drawEmitter(cx, gy, s * 0.8, GRN, 1, t);
+      drawCrystal(cx, cy, s * 1.2, WHT, WHT, 'lit', 0.9 + 0.1 * Math.sin(t * 2), t, 0);
+      const fs = Math.min(76, W * 0.13, H * 0.1), ty = cy + s * 0.75 + fs * 0.85;
+      ctx.save();
+      const tg = ctx.createLinearGradient(cx - 220, ty - 30, cx + 220, ty + 30);
+      tg.addColorStop(0, '#ffe7a8'); tg.addColorStop(0.5, '#ffa38f'); tg.addColorStop(1, '#c9a0ff');
+      ctx.shadowColor = 'rgba(255,170,140,0.6)'; ctx.shadowBlur = 24;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(fs * 0.08) + 'px';
+      text('NEW DAWN', cx, ty, fs, tg, 'center', 800);
+      ctx.restore();
+      const sy = ty + fs * 0.72;
+      text('Ein Lichträtsel', cx, sy, 20, 'rgba(232,228,255,0.88)', 'center', 500);
+      const n = solvedCount(), daily = save.daily[todayKey()];
+      const labels = [
+        [n === 0 ? 'Spielen' : n >= LEVELS.length ? 'Weiterspielen' : `Weiter · Level ${nextLevel() + 1}`, { primary: true, size: 21 }],
+        [`Level wählen · ${starCount()}/${LEVELS.length * 3}`, { icon: 'menu', iconLeft: true, size: 19, solid: true }],
+        [daily ? 'Tagesrätsel gelöst' : 'Tagesrätsel', { icon: daily ? 'check' : 'sun', iconLeft: true, size: 19, solid: true }],
+        [`Endlos · ${save.endless || 0} gelöst`, { icon: 'loop', iconLeft: true, size: 19, solid: true }],
+      ];
+      const ctrl = (TOUCH ? CONTROLS.slice(0, 1) : CONTROLS).flatMap(c => wrap(c, W - 40, 15));
+      const gap = 12, by0 = sy + 32, avail = H - by0 - (ctrl.length * 21 + 30);
+      if (avail >= 4 * 46 + 3 * gap || W < 600) { // one column
+        const bw = Math.min(330, W - 60), bh = clamp((avail - 3 * gap) / 4, 46, 58);
+        labels.forEach(([lab, o], k2) => button(cx - bw / 2, by0 + k2 * (bh + gap), bw, bh, lab, () => { SFX.click(); TITLE_ACTS[k2](); }, { ...o, focus: ui.focus === k2 && !pointer.mouse }));
+      } else { // two columns on short, wide screens
+        const bw = Math.min(310, (W - 60 - gap) / 2), bh = 50;
+        labels.forEach(([lab, o], k2) => button(cx - bw - gap / 2 + (k2 % 2) * (bw + gap), by0 + Math.floor(k2 / 2) * (bh + gap), bw, bh, lab, () => { SFX.click(); TITLE_ACTS[k2](); }, { ...o, focus: ui.focus === k2 && !pointer.mouse }));
+      }
+      ctrl.forEach((l, k2) => text(l, cx, H - 22 - (ctrl.length - 1 - k2) * 21, 15, 'rgba(232,236,255,0.85)', 'center', 500));
+      button(W - 62, 12, 50, 50, '', toggleMute, { icon: muted ? 'mute' : 'sound' });
+    },
+  },
+  levels: {
+    update(dt) {
+      menuClock += dt;
+      const n = LEVELS.length, cols = this.cols || 10;
+      const move = dx => { ui.focus = clamp(ui.focus + dx, 0, n - 1); SFX.click(); };
+      if (pressed('ArrowRight')) move(1); if (pressed('ArrowLeft')) move(-1);
+      if (pressed('ArrowDown')) move(cols); if (pressed('ArrowUp')) move(-cols);
+      if ((pressed('Enter') || pressed('Space')) && unlocked(ui.focus)) { SFX.click(); startPuzzle('campaign', ui.focus); }
+      if (pressed('Escape') || pressed('Backspace')) goScene('title');
+    },
+    draw(t) {
+      drawSky(t); ui.buttons = [];
+      button(16, 14, 52, 52, '', () => { SFX.click(); goScene('title'); }, { icon: 'back' });
+      text('Level wählen', W / 2, 40, 26, '#fff', 'center', 800);
+      text(`${starCount()} / ${LEVELS.length * 3}`, W - 46, 40, 18, '#ffd98a', 'right', 700);
+      starPath(W - 28, 40, 10); ctx.fillStyle = '#ffd98a'; ctx.fill();
+      const land = W > H * 1.12, cols = land ? 10 : 5, rowsPer = 10 / cols;
+      const top = 84, headH = 34, gapY = 12, gapX = 10;
+      const tileW = Math.min(92, (W - 32 - gapX * (cols - 1)) / cols);
+      const perRowH = (H - top - 20 - 3 * headH - 18) / (3 * rowsPer);
+      const ts = Math.max(40, Math.min(tileW, perRowH - gapY - 4));
+      this.cols = cols;
+      const gw = cols * ts + (cols - 1) * gapX, gx = (W - gw) / 2;
+      let y = top;
+      CHAPTERS.forEach((ch, ci) => {
+        const got = [...Array(10).keys()].reduce((s, k) => s + (save.stars[ci * 10 + k] || 0), 0);
+        text(`Kapitel ${ci + 1} · ${ch.name}`, gx, y + headH / 2, 18, css(ch.accent), 'left', 700);
+        text(`${got}/30`, gx + gw, y + headH / 2, 16, 'rgba(255,230,170,0.9)', 'right', 600);
+        y += headH;
+        for (let k = 0; k < 10; k++) {
+          const li = ci * 10 + k, x = gx + (k % cols) * (ts + gapX), yy = y + Math.floor(k / cols) * (ts + gapY + 4);
+          const open = unlocked(li), st = save.stars[li] || 0, cur = li === nextLevel() && open && !st;
+          const b = { x, y: yy, w: ts, h: ts, action: () => { if (open) { SFX.click(); startPuzzle('campaign', li); } else SFX.deny(); } };
+          ui.buttons.push(b);
+          const hov = pointer.inside && pointer.mouse && inRect(pointer, b), foc = ui.focus === li && !pointer.mouse;
+          rr(x, yy, ts, ts, ts * 0.2);
+          ctx.fillStyle = !open ? 'rgba(255,255,255,0.04)' : st ? css(ch.accent, hov ? 0.32 : 0.2) : hov ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.09)';
+          ctx.fill();
+          ctx.strokeStyle = foc ? 'rgba(255,255,255,0.95)' : cur ? `rgba(255,215,150,${0.6 + 0.4 * Math.sin(t * 4)})` : st ? css(ch.accent, 0.7) : 'rgba(255,255,255,0.16)';
+          ctx.lineWidth = foc || cur ? 2.5 : 1.3; ctx.stroke();
+          if (open) {
+            text(String(li + 1), x + ts / 2, yy + ts * 0.4, Math.max(18, ts * 0.32), '#fff', 'center', 800);
+            smallStars(x + ts / 2, yy + ts * 0.76, Math.max(5, ts * 0.085), st);
+          } else icon('lock', x + ts / 2, yy + ts / 2, ts * 0.4, 'rgba(220,225,255,0.45)');
+        }
+        y += rowsPer * (ts + gapY + 4) + 6;
+      });
+    },
+  },
+  play: {
+    update(dt) {
+      const st = state; st.t += dt;
+      if (pressed('Escape')) { toMenu(); return; }
+      if (!st.won) {
+        const lv = st.lv, c = st.cur;
+        const mv = (dx, dy) => { st.showCursor = true; c.x = clamp(c.x + dx, 0, lv.w - 1); c.y = clamp(c.y + dy, 0, lv.h - 1); };
+        if (pressed('ArrowLeft')) mv(-1, 0); if (pressed('ArrowRight')) mv(1, 0);
+        if (pressed('ArrowUp')) mv(0, -1); if (pressed('ArrowDown')) mv(0, 1);
+        if (pressed('Space') || pressed('Enter')) { st.showCursor = true; cycleCell(c.y * lv.w + c.x); }
+        if (pressed('Backspace') || pressed('Delete') || pressed('KeyX')) cycleCell(c.y * lv.w + c.x, true);
+        if (pressed('KeyZ') || pressed('KeyU')) undoMove();
+        if (pressed('KeyR')) restartBoard();
+        if (pressed('KeyH')) useHint();
+      } else {
+        st.winT += dt;
+        if (st.winT >= tune.winDelay) { st.resT = 0; goScene('results'); }
+      }
+      for (const c of st.sim.crys) { const tg = c.st === 'lit' ? 1 : 0; st.glow[c.i] += (tg - st.glow[c.i]) * Math.min(1, dt * 7); }
+      st.invShake = Math.max(0, st.invShake - dt); st.tileShake.t = Math.max(0, st.tileShake.t - dt);
+      st.hintFlash = Math.max(0, st.hintFlash - dt * 1.5);
+      updateFx(dt);
+    },
+    tap(p) {
+      const L = state.L; if (!L || state.won) return;
+      const i = cellAt(L, p.x, p.y);
+      if (i >= 0) { state.showCursor = false; state.cur = { x: i % state.lv.w, y: (i / state.lv.w) | 0 }; cycleCell(i, p.btn === 2); }
+    },
+    draw(t) {
+      const st = state; drawSky(t); ui.buttons = [];
+      const L = playLayout(); st.L = L;
+      drawBoardBase(L);
+      drawBeams(st.sim, L, t, st.won ? 1 : 0.95);
+      drawTiles(L, t);
+      if (st.won) { // a sweep of light across the board
+        const f = clamp(st.winT / 0.9, 0, 1), x = L.bx - L.cs + (L.bw + L.cs * 2) * f;
+        ctx.save(); rr(L.bx - 14, L.by - 14, L.bw + 28, L.bh + 28, 22); ctx.clip();
+        const g = ctx.createLinearGradient(x - L.cs * 1.5, 0, x + L.cs * 1.5, 0);
+        g.addColorStop(0, 'rgba(255,240,200,0)'); g.addColorStop(0.5, `rgba(255,240,200,${0.22 * (1 - f * 0.5)})`); g.addColorStop(1, 'rgba(255,240,200,0)');
+        ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.fillRect(L.bx - 14, L.by - 14, L.bw + 28, L.bh + 28); ctx.restore();
+      }
+      drawFx();
+      drawHud(L, t);
+    },
+  },
+  results: {
+    update(dt) {
+      const st = state; st.t += dt; st.resT += dt; updateFx(dt);
+      for (const c of st.sim.crys) st.glow[c.i] += (1 - st.glow[c.i]) * Math.min(1, dt * 7);
+      while (st.sounded < st.stars && st.resT > 0.35 + st.sounded * 0.28) SFX.star(st.sounded++);
+      if (pressed('KeyR')) { startPuzzle(st.mode, st.li); return; }
+      if (pressed('Escape')) { toMenu(); return; }
+      focusKeys(3, k => RESULT_ACTS[k]());
+    },
+    draw(t) {
+      const st = state;
+      scenes.play.draw(t); ui.buttons = [];
+      ctx.fillStyle = `rgba(4,6,20,${0.28 * ease(st.resT / 0.4)})`; ctx.fillRect(0, 0, W, H);
+      const final = st.mode === 'campaign' && st.li === LEVELS.length - 1;
+      const pw = Math.min(430, W - 32), ph = final ? 400 : 360, px = (W - pw) / 2;
+      const py = Math.max(8, (H - ph) / 2) + (1 - ease(st.resT / 0.45)) * 40;
+      if (final) { // the sun comes up above the panel, or beside it when there is no room
+        const sr = Math.min(W, H) * 0.09, rise = ease((st.resT - 0.3) / 1.6);
+        let sx = W / 2, sy = py + sr - rise * sr * 2.2;
+        if (py < sr * 2.4) { sx = px + pw + (W - px - pw) / 2; sy = H * 0.62 - rise * H * 0.2; }
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; glow(sx, sy, sr * 6, 'sun', 0.55 * rise); ctx.restore();
+        ctx.save(); ctx.globalAlpha = rise; drawSunDisc(sx, sy, sr, t, 0.16); ctx.restore();
+      }
+      ctx.save(); ctx.globalAlpha = ease(st.resT / 0.3);
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 40;
+      rr(px, py, pw, ph, 26);
+      const pg = ctx.createLinearGradient(0, py, 0, py + ph); pg.addColorStop(0, 'rgba(34,30,78,0.96)'); pg.addColorStop(1, 'rgba(14,14,40,0.96)');
+      ctx.fillStyle = pg; ctx.fill(); ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = 'rgba(255,214,170,0.45)'; ctx.lineWidth = 1.5; ctx.stroke();
+      const title = final ? 'Die Sonne geht auf!' : st.mode === 'daily' ? 'Tagesrätsel gelöst!' : 'Gelöst!';
+      text(title, W / 2, py + 48, final ? 30 : 34, '#fff3dc', 'center', 800);
+      for (let k = 0; k < 3; k++) { // stars pop in one by one
+        const at = 0.35 + k * 0.28, f = clamp((st.resT - at) / 0.25, 0, 1), got = k < st.stars;
+        const sx = W / 2 + (k - 1) * 66, sy = py + 112 - (k === 1 ? 10 : 0), r = 26 * (got ? 0.6 + 0.4 * ease(f) + 0.15 * Math.sin(f * Math.PI) : 1);
+        starPath(sx, sy, r);
+        if (got && f > 0) { const g = ctx.createLinearGradient(sx, sy - r, sx, sy + r); g.addColorStop(0, '#fff6c0'); g.addColorStop(1, '#ffad40'); ctx.fillStyle = g; ctx.fill(); ctx.save(); ctx.globalCompositeOperation = 'lighter'; glow(sx, sy, r * 2.2, YEL, 0.35 * f); ctx.restore(); }
+        else { ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1.5; ctx.stroke(); }
+      }
+      const lv = st.lv;
+      text(`Spiegel: ${st.used} · Par ${lv.par}` + (st.hintsUsed ? ` · Hinweise: ${st.hintsUsed}` : ''), W / 2, py + 168, 18, '#e3e6ff', 'center', 600);
+      let msg = st.used < lv.par ? 'Genial – unter Par!' : st.stars === 3 ? 'Perfekt gelöst.' : st.used > lv.par ? `Schaffst du es mit ${lv.par} Spiegel${lv.par === 1 ? '' : 'n'}?` : 'Ohne Hinweis gibt es drei Sterne.';
+      if (st.mode === 'endless') msg = `${save.endless} Rätsel gelöst – es wird schwerer.`;
+      if (final) msg = 'Du hast den Morgen gebracht.';
+      text(msg, W / 2, py + 198, 17, '#ffd9a8', 'center', 600);
+      if (final) text('Tagesrätsel und Endlos warten auf dich.', W / 2, py + 224, 16, '#cfd4ff', 'center', 500);
+      const bw = pw - 60, bx = px + 30; let by = py + ph - 140;
+      const nextLabel = final || st.mode === 'daily' ? 'Zum Titel' : st.mode === 'endless' ? 'Nächstes Rätsel' : 'Weiter';
+      button(bx, by, bw, 54, nextLabel, RESULT_ACTS[0], { primary: true, size: 21, focus: ui.focus === 0 && !pointer.mouse });
+      by += 66;
+      const hw = (bw - 12) / 2;
+      button(bx, by, hw, 48, 'Nochmal', RESULT_ACTS[1], { size: 18, focus: ui.focus === 1 && !pointer.mouse });
+      button(bx + hw + 12, by, hw, 48, st.mode === 'campaign' ? 'Levels' : 'Menü', RESULT_ACTS[2], { size: 18, focus: ui.focus === 2 && !pointer.mouse });
+      ctx.restore();
+    },
+  },
+};
+const RESULT_ACTS = [
+  () => { SFX.click(); goNext(); },
+  () => { SFX.click(); startPuzzle(state.mode, state.li); },
+  () => { SFX.click(); toMenu(); },
+];
+
+function drawHud(L, t) {
+  const st = state, lv = st.lv;
+  text(st.name, 18, 34, 28, '#ffffff', 'left', 800);
+  text(st.sub, 18, 64, 16, 'rgba(220,226,255,0.85)', 'left', 600);
+  // the mirror stock: one bar per mirror, bright while still free; packed tighter when the name needs the room
+  const inv = st.inventory, free = Math.max(0, inv - st.used);
+  const sh = st.invShake > 0 ? Math.sin(st.invShake * 50) * 6 : 0;
+  ctx.font = `800 28px ${FONT}`; const nameR = 18 + ctx.measureText(st.name).width;
+  const ix = W - 18 + sh, n = inv, iw = clamp((ix - nameR - 14) / Math.max(1, n), 8, 22);
+  for (let k = 0; k < n; k++) icon('mirror', ix - (n - k - 0.5) * iw, 32, Math.min(22, iw + 6), k < free ? '#e8eeff' : 'rgba(232,238,255,0.22)');
+  text(`${free} frei · Par ${lv.par}`, ix, 64, 16, st.used > lv.par ? '#ffc39a' : 'rgba(220,226,255,0.85)', 'right', 600);
+  if (st.tip && scene !== 'results') { // the tip for this level
+    const tb = L.tipBox, bw = Math.min(tb.w, 640), lh = 21;
+    const lines = wrap(st.tip, bw - 28, 17, 500).slice(0, tb.lines);
+    const bh = lines.length * lh + 14, bx = tb.x + (tb.w - bw) / 2, byy = tb.y + (tb.h - bh) / 2;
+    ctx.save(); ctx.globalAlpha = ease(st.t / 0.6);
+    rr(bx, byy, bw, bh, 14); ctx.fillStyle = 'rgba(255,255,255,0.075)'; ctx.fill(); ctx.strokeStyle = 'rgba(255,220,170,0.28)'; ctx.lineWidth = 1; ctx.stroke();
+    lines.forEach((l, k) => text(l, bx + bw / 2, byy + 7 + lh / 2 + k * lh, 17, '#fff1dc', 'center', 500));
+    ctx.restore();
+  }
+  const hintsLeft = Math.max(0, tune.maxHints - st.hintsUsed);
+  const defs = [
+    ['menu', 'Menü', () => { SFX.click(); toMenu(); }],
+    ['undo', 'Zurück', undoMove],
+    ['reset', 'Neu', restartBoard],
+    ['hint', `Hinweis ${hintsLeft}`, useHint],
+    [muted ? 'mute' : 'sound', 'Ton', toggleMute],
+  ];
+  if (L.land) {
+    const bw = 96, gap = 10, x = 18, bh = Math.min(70, Math.floor((H - 96 - 12 - gap * 4) / 5)), y0 = Math.max(96, (H - (bh * 5 + gap * 4)) / 2);
+    defs.forEach(([ic, lab, act], k) => button(x, y0 + k * (bh + gap), bw, bh, lab, act, { icon: ic, r: 16, dim: (k === 1 && !st.undo.length) || (k === 3 && !hintsLeft) }));
+  } else {
+    const gap = 8, bw = Math.min(90, (W - 28 - gap * 4) / 5), bh = 74, total = bw * 5 + gap * 4, x0 = (W - total) / 2, y = H - bh - 22;
+    defs.forEach(([ic, lab, act], k) => button(x0 + k * (bw + gap), y, bw, bh, lab, act, { icon: ic, r: 16, dim: (k === 1 && !st.undo.length) || (k === 3 && !hintsLeft) }));
+  }
+  if (st.hintFlash > 0) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = st.hintFlash * 0.18; ctx.fillStyle = '#9ff'; ctx.fillRect(0, 0, W, H); ctx.restore(); }
+}
+
+// ---- Loop: fixed step, frame time clamped ---------------------------------------------
+function step() {
+  try {
+    if (pressed('KeyM')) { toggleMute(); hit.delete('KeyM'); }
+    for (const p of taps.splice(0)) {
+      const sc = scene, st = state;
+      const b = [...ui.buttons].reverse().find(bb => inRect(p, bb));
+      if (b) b.action(); else if (scenes[scene].tap) scenes[scene].tap(p);
+      if (scene !== sc || state !== st) break; // later taps were aimed at the old screen
+    }
+    scenes[scene].update(STEP);
+    updateSky(STEP);
+  } finally { hit.clear(); }
+}
+let last, acc = 0, ALPHA = 1; // ALPHA: how far the frame is between the last two steps
+function tick() {
+  const now = clock.now();
+  acc += Math.min(now - last, 0.25); last = now; // a stall never fast-forwards the game
+  while (acc >= STEP) { acc -= STEP; step(); }
+  ALPHA = acc / STEP;
+  drawFrame();
+}
+function drawFrame() {
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  scenes[scene].draw((scene === 'play' || scene === 'results') && state ? state.t : menuClock);
+}
+function frame() { try { tick(); } finally { requestAnimationFrame(frame); } } // one error never stops the loop
+// A headless browser on a time budget runs timers but almost no animation frames: a timer
+// ticks when no frame has come for 100 ms on a visible page; a hidden tab stays paused.
+function timer() { if (document.visibilityState === 'visible' && clock.now() - last > 0.1) tick(); }
+
+// ---- What a check can read and drive (?manual=1 stops the loop; players never see it) ----
+window.game = {
+  get scene() { return scene; },
+  get state() { return state; },
+  press(code) { hit.add(code); },
+  hold(code, on) { on ? down.add(code) : down.delete(code); },
+  get events() { return events; }, // the loop steps; a check empties it
+  step(n = 1, draw = true, alpha = 1) {
+    for (let i = 0; i < n; i++) step();
+    if (draw) { ALPHA = alpha; drawFrame(); }
+  },
+  tap(x, y, btn = 0) { taps.push({ x, y, btn }); }, // logical coordinates, handled on the next step
+  solve() { if (scene === 'play' && !state.won) { state.placed = new Int8Array(state.placed.length); for (const s of state.lv.sol) state.placed[s.i] = s.m; afterMove(); } }, // checks only
+  simulate, generate, LEVELS, solvable,
+};
+
+seed = Number(params.get('seed')) || CONFIG.seed;
+scene = params.get('scene') || 'title';
+if (params.get('level')) startPuzzle('campaign', Number(params.get('level')) - 1);
+else if (scene === 'play' || scene === 'results') startPuzzle('campaign', nextLevel());
+if (params.get('scene') === 'figures') scene = 'figures';
+if (!scenes[scene]) scene = 'title';
+last = clock.now();
+if (params.get('manual') === '1') drawFrame();
+else { requestAnimationFrame(frame); setInterval(timer, 50); }
+</script>
+</body>
+</html>
