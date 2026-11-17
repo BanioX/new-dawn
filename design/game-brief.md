@@ -1,0 +1,67 @@
+# Game Brief: New Dawn
+
+## In your words
+Erstelle mir ein smartes spiel das offline spielbar ist einfach codebar ist super spass macht und schön anzusehen ist.
+
+(Repo: new-dawn)
+
+**Pitch:** Lenke farbige Lichtstrahlen mit Spiegeln durch eine nächtliche Kristallhöhle, mische Rot, Grün und Blau zu neuen Farben und bring jeden Kristall zum Leuchten – mit jedem Kapitel wird es Morgen. *(guessed)*
+
+**Genre:** grid puzzle (Licht lenken, Farben mischen) *(guessed)*
+
+**Controls:** Tippen/Klicken auf ein Feld: Spiegel setzen → drehen → entfernen; Rechtsklick entfernt. Tastatur: Pfeiltasten + Leertaste, Z rückgängig, R neu starten, H Hinweis. *(guessed)*
+
+**Question:** Macht es Spaß, Lichtstrahlen mit wenigen Spiegeln zu Farbkristallen zu lenken, wenn Farbmischung und sich kreuzende Strahlen echte Aha-Momente erzeugen? *(guessed)*
+
+**Hooks:** Gelb braucht Rot + Grün aus zwei Richtungen, Weiß alle drei; jeder Spiegel ist beidseitig und lenkt auch fremde Strahlen ab. Der Himmel wird mit jedem Kapitel heller (Mitternacht → Blaue Stunde → Morgenrot). *(guessed)*
+
+**Intent:** soft or no failure *(provisional)*
+
+## Look and references
+- Look: dunkles Nachtglas; additive, leuchtende Lichtstrahlen mit fließenden Lichtfunken; facettierte Edelstein-Kristalle; silberne Spiegel, goldene feste Spiegel, Steinmauern, Farbglas-Filter; der Himmel wandert pro Kapitel von Mitternachtsblau über Blaue Stunde zu Morgenrot. Signature: beim Lösen geht hinter dem Brett eine Sonne auf. Every figure drawn, no emoji, no plain circles. *(guessed)*
+- References: keine genannt; Werte aus klassischen Licht-/Spiegelrätseln *(guessed)*
+- View: 2D · Camera: static, das ganze Brett im Fenster *(guessed)*
+
+## First minute
+Titel „New Dawn“ mit tanzenden Strahlen, ein Knopf „Spielen“. Level 1: ein roter Lichtstrahl schießt aus einer Linse ins Leere, daneben ein dunkler roter Kristall, ein Hinweis „Tippe auf ein Feld im Strahl“. Der Spieler tippt, ein Spiegel erscheint, der Strahl knickt ab – noch einmal tippen dreht den Spiegel, der Strahl trifft, der Kristall glüht auf, Funken, eine Sonne geht auf. Level 2–3 bringen zwei Knicke und eine Mauer, Level 4 zwei Farben. *(guessed)*
+
+## Challenge
+Ab Level 5 (ca. Minute 5) kreuzen sich Strahlen, und ein Spiegel für Rot lenkt plötzlich Grün ab; ab Kapitel 2 müssen zwei Strahlen im selben Kristall ankommen, und eine falsche Farbe lässt ihn flackern. Spiegel sind begrenzt (Par + 1); drei Sterne nur mit Par und ohne Hinweis. Kein Verlieren: Rückgängig und Neustart sind gratis. Kapitel 3 bringt Farbfilter und weiße Kristalle. *(guessed)*
+
+## Core loop
+- Strahlen ansehen → Spiegel setzen/drehen → Strahlen springen live um
+- Kristalle füllen sich mit Farbe → alle leuchten → Sterne, nächstes Level
+- Besser werden: mit weniger Spiegeln (Par) lösen für drei Sterne
+
+## Goal & fail state
+- Ziel: alle 30 Level der drei Kapitel lösen (Mitternacht → Morgenrot), danach Tagesrätsel und Endlos-Modus.
+- Kein Scheitern: falsche Farbe = Kristall flackert; Rückgängig/Neustart jederzeit.
+
+## Features
+- [ ] Brett mit Strahlen-Simulation: Spiegel /, \, Mauern, Kristalle, Linsen (Emitter)
+- [ ] Farbmischung Rot/Grün/Blau → Gelb, Magenta, Cyan, Weiß
+- [ ] 30 Level in 3 Kapiteln, jedes bringt eine neue Idee (feste Spiegel, Mischen, Filter, Weiß)
+- [ ] Spiegel-Vorrat, Par und Sterne; Hinweis-Knopf
+- [ ] Rückgängig ohne Limit, Neustart, Fortschritt gespeichert (offline, localStorage)
+- [ ] Tagesrätsel und Endlos-Modus aus dem Generator
+- [ ] Synth-Sounds (Web Audio), Stummschalten
+
+## Avoid
+- Internet-Abhängigkeiten (alles offline, eine Datei)
+- Emoji-Grafik
+
+## Out of scope
+- Level-Editor: change it after play
+- Online-Bestenlisten: needs a server
+
+## Build order
+1. Ein Kapitel spielbar von Level 1 bis zum Kapitelende: Strahlen, Spiegel, Kristalle, Sieg-Moment (kein Verlieren, nur Neustart).
+2. Mischen, Filter, Weiß; Kapitel 2 und 3.
+3. Tagesrätsel, Endlos, Sound, Feinschliff.
+
+---
+**Kill condition:** Wenn das Umlenken nach zwei Tuning-Runden nur Ausprobieren statt Denken ist. *(guessed)*
+
+**Who it's for / what they feel:** Rätselfans, die eine ruhige, schöne Viertelstunde mit „Aha!“ wollen. *(guessed)*
+
+**Games you love / don't:** keine genannt.
