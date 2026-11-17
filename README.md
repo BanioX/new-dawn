@@ -40,15 +40,17 @@ Sonne aufgeht.
 Farbenblind? Jede Grundfarbe hat zusätzlich eine Form: Rot ▲ Dreieck, Grün ■ Quadrat, Blau ◆ Raute.
 
 **Tastatur:** Pfeiltasten + Leertaste setzen und drehen · `Entf`, `Rücktaste` oder `X` entfernen ·
-`Z` zurück · `R` neu · `H` Hinweis · `M` Ton · `Esc` Menü.
+`Z` oder `U` zurück · `R` neu · `H` Hinweis · `M` Ton · `Esc` Menü.
+Das gilt für deutsche und englische Tastaturen.
 
 ## Inhalt
 
 - **30 Level in 3 Kapiteln** (Mitternacht, Blaue Stunde, Morgenrot). Jedes Kapitel bringt neue Ideen:
   Kreuzungen, feste Spiegel, Farbmischung, falsche Farben, Farbglas und weißes Licht.
   Alle Level im Überblick: [docs/LEVELS.md](docs/LEVELS.md).
-- **Tagesrätsel:** jeden Tag ein neues, montags leicht, sonntags schwer, nie schwerer als dein Fortschritt.
-- **Endlos:** Rätsel um Rätsel, immer schwerer.
+- **Tagesrätsel:** jeden Tag ein neues, montags leicht, sonntags schwer, nie schwerer als dein Fortschritt
+  (mindestens mit den Regeln von Level 4).
+- **Endlos:** Rätsel um Rätsel, schwerer bis zu den Regeln von Level 30; ab dem 13. Rätsel bleibt es dabei.
 - Sterne, Hinweise, Rückgängig ohne Limit, Synth-Klänge (Web Audio), Spielstand im Browser.
 
 ![Der Sonnenaufgang nach dem letzten Level](docs/screenshot-sunrise.png)

@@ -6,7 +6,7 @@ Es gibt keine Bibliotheken, keinen Build-Schritt und keinen Server: zwei Dateien
 | Datei | Inhalt |
 |---|---|
 | `index.html` | das ganze Spiel: Regeln, Generator, Löser, Grafik, Klang, Menüs |
-| `config.js` | alle Stellschrauben (`window.CONFIG`), jeweils mit Wert, Minimum, Maximum, Schritt |
+| `config.js` | alle Stellschrauben (`window.CONFIG`), jeweils mit Wert, Minimum, Maximum, Schritt; nur `seed` ist eine einfache Zahl (im Code `CONFIG.seed`, alle anderen über `tune.name`) |
 | `dist/new-dawn.html` | beides in einer Datei, gebaut von `tools/build-single.sh` |
 | `design/game-brief.md` | der Spiel-Brief: Idee, erste Minute, Herausforderung, Features |
 | `docs/LEVELS.md` | alle 30 Level im Überblick |
@@ -45,7 +45,8 @@ Ein Level ist ein Objekt `lv = { w, h, tile, sol, par, spec }`:
   - `{ t: 'wall' }`: Mauer
   - `{ t: 'fixed', m }`: goldener Spiegel (`decoy: true`, wenn er nicht zur Lösung gehört)
   - `{ t: 'filter', c }`: Farbglas, lässt nur die Farbe `c` durch
-- `sol` ist die Lösung des Generators als Liste `{ i, m }`, `par` ihre Länge.
+- `sol` sind die Spiegel, die der Spieler setzen muss (die Lösung des Generators ohne die goldenen
+  Spiegel), als Liste `{ i, m }`; `par` ist ihre Länge.
 - Die Spiegel des Spielers stehen getrennt in `state.placed` (`Int8Array`): `0` leer, `1` = `/`, `2` = `\`.
 
 **Farben sind Bitmasken:** Rot `1`, Grün `2`, Blau `4`. Gemischt wird mit ODER:
@@ -85,15 +86,22 @@ Ein Brett wird **rückwärts vom Kristall aus** gebaut:
 
 Ein Brett wird nur angenommen, wenn alle Prüfungen bestehen:
 
+- Par (die Spiegel des Spielers in der Lösung) ist mindestens `minPar`.
+- Es gibt genug Felder für alle versprochenen Farbgläser (`filters`).
 - Die Lösung bringt alle Kristalle zum Leuchten.
 - Vor dem ersten Zug bekommt kein Kristall eine seiner Farben.
 - Bei `cross: n` kreuzen sich die Lösungsstrahlen mindestens `n`-mal.
 - **Es gibt keine Lösung mit weniger Spiegeln als Par** (`solvable(lv, par - 1)` ist `false`).
 - Bei `needFilter` gäbe es ohne das Farbglas eine kürzere Lösung, das Glas zählt also wirklich.
 
-`generate(spec, seed)` probiert bis zu `genAttempts` Bretter. Klappt keins, lockert es die Regeln
-stufenweise: zuerst ohne `cross` und `needFilter` und mit einem Spiegel weniger, dann ein einfaches
-Brett. `lv.relaxed` sagt, welche Stufe nötig war; bei allen 30 Leveln ist es keine.
+`generate(spec, seed)` probiert je Stufe bis zu `genAttempts` Bretter. Klappt keins, lockert es die
+Regeln stufenweise:
+
+1. ohne `cross` und `needFilter`, und `minPar` um eins kleiner (nie unter 1);
+2. dasselbe Brett (Größe, Kristalle) ohne Mauern, Gold, Köder und Glas, mit einem Spiegel pro Lichtweg;
+3. als letzter Ausweg ein 5×5-Brett mit einem roten Kristall.
+
+`lv.relaxed` (1, 2 oder 3) sagt, welche Stufe nötig war; bei allen 30 Leveln ist es keine (`undefined`).
 Hat ein Level `firstTurn`, wird das Brett bei Bedarf gespiegelt (`flipX`), damit der erste Spiegel
 erst gedreht werden muss.
 
@@ -129,8 +137,11 @@ wird. Spiegel abseits aller Strahlen braucht man nie. Nach `200000` Schritten gi
   Danach berechnet `afterMove()` das Licht neu, spielt Klänge, zeigt Funken und erkennt den Sieg.
 - **Spiegelvorrat:** `par + spareMirrors`.
 - **Sterne:** 3, minus `overParStarCost` bei mehr Spiegeln als Par, minus `hintStarCost` je Hinweis, mindestens 1.
-- **Hinweise** (`useHint`): zeigen den nächsten Lösungsspiegel. Ist der Vorrat leer, markieren sie
-  zusätzlich einen Spiegel, der wegmuss. Ein noch sichtbarer Hinweis kostet nichts.
+- **Hinweise** (`useHint`, höchstens `maxHints`): zeigen den nächsten Lösungsspiegel. Ist der Vorrat
+  leer, markieren sie zusätzlich einen Spiegel, der wegmuss. Stehen schon alle Lösungsspiegel,
+  markiert der Hinweis rot einen überzähligen Spiegel. Ein noch sichtbarer Hinweis kostet nichts.
+  In Level 1 ist der erste Zug von Anfang an als kostenloser Hinweis zu sehen.
+- **Rückgängig** hat kein Limit; „Neu“ leert das Brett und lässt sich ebenfalls rückgängig machen.
 - **Tagesrätsel:** Montag bis Sonntag nutzen die Regeln der Level 7, 9, 15, 17, 19, 24 und 28
   (`DAILY_WEEK`), aber nie schwerere als die des zuletzt gelösten Levels
   (mindestens die Regeln von Level 4).
@@ -180,8 +191,17 @@ Adress-Parameter:
 | `?render=cheap` | zeichnet mit Pixeldichte 1 (für automatische Screenshots) |
 | `?manual=1` | hält die Spielschleife an (für Tests mit `game.step`) |
 
-Im Browser steht `window.game` bereit: `scene`, `state`, `press(code)`, `tap(x, y)`, `step(n)`,
-`solve()` (setzt die Lösung des Generators), `simulate`, `generate`, `solvable` und `LEVELS`.
+Im Browser steht `window.game` bereit:
+
+| Name | Zweck |
+|---|---|
+| `scene`, `state` | aktueller Bildschirm und Spielzustand |
+| `press(code)`, `hold(code, an)` | Taste drücken oder halten (`event.code`, z. B. `'KeyH'`) |
+| `tap(x, y, knopf)` | Antippen in logischen Koordinaten; `knopf = 2` entfernt einen Spiegel |
+| `step(n)` | `n` Spielschritte ausführen |
+| `events` | Liste der Ereignisse `start` und `solved` (mit Sternen, Spiegeln, Par) |
+| `solve()` | setzt die Lösung des Generators |
+| `simulate`, `generate`, `solvable`, `LEVELS` | die Funktionen und die Level-Tabelle von oben |
 
 Beispiel mit Playwright (Node):
 

@@ -1,10 +1,11 @@
 # Die 30 Level
 
-Alle Level entstehen aus einer Zeile der Tabelle `LEVELS` in `index.html` und dem `seed` aus
-`config.js` (Standard `1`). Der Generator baut jedes Brett und beweist mit einem Löser, dass es
-lösbar ist und dass **Par die kleinste mögliche Zahl an Spiegeln** ist.
+Alle Level entstehen aus einer Zeile der Tabelle `LEVELS` in `index.html` und den Generator-Werten
+aus `config.js`: `seed` (Standard `1`), `maxSegment` (Standard `4`) und `genAttempts` (Standard `900`).
+Der Generator baut jedes Brett und beweist mit einem Löser, dass es lösbar ist und dass
+**Par die kleinste mögliche Zahl an Spiegeln** ist.
 
-Die Übersicht gilt für `seed: 1`. Sie wurde aus dem Spiel selbst erzeugt.
+Die Übersicht gilt für diese Standardwerte. Sie wurde aus dem Spiel selbst erzeugt.
 
 | Level | Kapitel | Brett | Kristalle | Linsen | Par | Mauern | Gold (Lösung) | Gold (Köder) | Glas | Neu in diesem Level |
 |---:|---:|---|---|---:|---:|---:|---:|---:|---:|---|
@@ -15,7 +16,7 @@ Die Übersicht gilt für `seed: 1`. Sie wurde aus dem Spiel selbst erzeugt.
 | 5 | 1 | 6×6 | Grün, Blau | 2 | 3 | 2 | 0 | 0 | 0 | beidseitige Spiegel, Strahlen kreuzen; Kreuzung Pflicht |
 | 6 | 1 | 6×7 | Rot, Grün | 2 | 3 | 3 | 1 | 0 | 0 | feste goldene Spiegel |
 | 7 | 1 | 7×7 | Rot, Grün, Blau | 3 | 5 | 3 | 0 | 0 | 0 | Kreuzung Pflicht |
-| 8 | 1 | 7×7 | Blau, Rot | 2 | 5 | 4 | 0 | 1 | 0 | Kreuzung Pflicht |
+| 8 | 1 | 7×7 | Blau, Rot | 2 | 5 | 4 | 0 | 1 | 0 | goldene Köder; Kreuzung Pflicht |
 | 9 | 1 | 7×7 | Rot, Grün, Blau | 3 | 5 | 4 | 0 | 1 | 0 | – |
 | 10 | 1 | 7×8 | Rot, Grün, Blau | 3 | 5 | 5 | 1 | 1 | 0 | – |
 | 11 | 2 | 6×6 | Gelb | 2 | 2 | 1 | 0 | 0 | 0 | Mischen: Gelb |
@@ -56,13 +57,13 @@ gehören aber nicht zur Lösung.
 | `turns` | Knicke (Spiegel) pro Lichtweg, als `[min, max]` |
 | `walls` | Anzahl Mauern |
 | `fixed` | bis zu so viele Lösungsspiegel werden golden und fest |
-| `decoy` | goldene Köderspiegel, die zu Beginn in einem Strahl liegen |
+| `decoy` | bis zu so viele goldene Köderspiegel; sie kommen nur auf freie Felder, durch die zu Beginn ein Strahl läuft (gibt es zu wenige, fehlen sie, z. B. in Level 15) |
 | `filters` | Farbglas-Felder |
 | `minPar` | so viele Spiegel braucht die Lösung mindestens |
 | `cross` | so oft müssen sich die Lösungsstrahlen mindestens kreuzen |
 | `needFilter` | ohne das Glas gäbe es eine kürzere Lösung, das Glas zählt also |
 | `firstTurn` | der erste Lösungsspiegel steht so (`2` = `\`), damit er gedreht werden muss |
-| `tip` | Schlüssel des Tipps aus `TIPS`, der über dem Brett steht |
+| `tip` | Schlüssel des Tipps aus `TIPS`; er steht in der Kampagne über dem Brett (Handy quer: rechts daneben). Level mit `tip` gelten als Lehrlevel, der Endlos-Modus überspringt sie |
 
 Jede Linse hat genau eine Grundfarbe. Ein Gelb-Kristall braucht also zwei Linsen (Rot und Grün),
 ein Weiß-Kristall drei.
@@ -72,10 +73,13 @@ ein Weiß-Kristall drei.
 1. In `index.html` die Tabelle `LEVELS` suchen.
 2. Eine Zeile ändern oder anhängen.
 3. Die Seite neu laden. Mit `index.html?level=31&fresh=1` startest du ein neues 31. Level direkt.
+4. Für die Einzeldatei danach `sh tools/build-single.sh` ausführen, sonst fehlt die Änderung in
+   `dist/new-dawn.html`.
 
 Die Level-Auswahl zeigt drei Kapitel à zehn Level. Ein 31. Level und weitere gehören zum letzten
 Kapitel; du erreichst sie über „Weiter“ nach Level 30 oder direkt mit `?level=`.
-Das jeweils letzte Level der Tabelle ist das Finale mit dem Sonnenaufgang.
+Das jeweils letzte Level der Tabelle ist das Finale mit dem Sonnenaufgang. Hängst du Level an,
+verschiebe `tip: 'final'` („Das letzte Rätsel vor Sonnenaufgang.“) von Level 30 in die neue letzte Zeile.
 
 Wird ein Brett zu schwer für den Generator (zu klein für so viele Kristalle, Knicke und Regeln),
 lockert er die Regeln stufenweise. Ob das passiert ist, zeigt `game.state.lv.relaxed` in der

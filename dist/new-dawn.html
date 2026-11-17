@@ -571,7 +571,7 @@ function startPuzzle(mode, li = 0) {
   events.push({ type: 'start', mode, level: li, par: lv.par, relaxed: !!lv.relaxed });
 }
 const countUsed = () => state.placed.reduce((n, v) => n + (v ? 1 : 0), 0);
-function pushUndo() { state.undo.push(state.placed.slice()); if (state.undo.length > 300) state.undo.shift(); }
+function pushUndo() { state.undo.push(state.placed.slice()); } // no limit: a snapshot is at most 81 bytes
 /** Cycles one cell: empty -> '/' -> '\' -> empty. remove=true empties it at once. */
 function cycleCell(i, remove = false) {
   const lv = state.lv; if (state.won || i < 0 || i >= lv.w * lv.h) return;
@@ -1264,7 +1264,7 @@ const scenes = {
         if (pressed('ArrowUp')) mv(0, -1); if (pressed('ArrowDown')) mv(0, 1);
         if (pressed('Space') || pressed('Enter')) { st.showCursor = true; cycleCell(c.y * lv.w + c.x); }
         if (pressed('Backspace') || pressed('Delete') || pressed('KeyX')) cycleCell(c.y * lv.w + c.x, true);
-        if (pressed('KeyZ') || pressed('KeyU')) undoMove();
+        if (pressed('KeyZ') || pressed('KeyY') || pressed('KeyU')) undoMove(); // Y: the Z key on German keyboards
         if (pressed('KeyR')) restartBoard();
         if (pressed('KeyH')) useHint();
       } else {

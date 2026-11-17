@@ -12,6 +12,9 @@ Alle nennenswerten Änderungen an New Dawn, die neueste zuerst.
 ### Behoben
 - Ein angehängtes 31. Level (oder mehr) führte zu einem Absturz, weil es kein viertes Kapitel gibt.
   Weitere Level gehören jetzt zum letzten Kapitel.
+- `Z` für Rückgängig funktionierte auf deutschen Tastaturen nicht (das Spiel liest die Tastenposition).
+  Jetzt gehen `Z` und `U` auf deutschen und englischen Tastaturen.
+- Rückgängig war still auf 300 Züge begrenzt; jetzt gibt es wirklich kein Limit.
 
 ## 0.2.1 – 2026-11-17
 
@@ -36,7 +39,8 @@ sind eingebaut.
 - Level 1 muss einmal gedreht werden, so lernt man den Dreh in der ersten Minute.
 - Schwierigkeitskurve neu abgestimmt: Kapitel 3 ist im Schnitt wieder schwerer als Kapitel 2, und
   das Finale braucht 7 Spiegel, so viele wie die schwersten Level davor.
-- Tagesrätsel: montags leicht, sonntags schwer, nie schwerer als der eigene Fortschritt.
+- Tagesrätsel: montags leicht, sonntags schwer, nie schwerer als der eigene Fortschritt
+  (mindestens mit den Regeln von Level 4).
 - Endlos überspringt die Lehrlevel.
 - Der Generator lockert seine Regeln stufenweise, statt gleich auf ein Anfängerbrett zu fallen.
 
@@ -54,6 +58,7 @@ sind eingebaut.
 
 ### Behoben
 - Ein beschädigter Spielstand blockierte das Spiel; jetzt werden nur gültige Einträge übernommen.
+- Ein Testlauf mit `?fresh=1` überschrieb beim Speichern den echten Spielstand; jetzt speichert er gar nicht.
 - Hinweise kosteten Sterne für nichts (freier Hinweis in Level 1, leerer Vorrat).
 - Nach einer Mausbewegung war der Tastaturfokus unsichtbar.
 - Ein um Mitternacht gelöstes Tagesrätsel zählte für den nächsten Tag.
@@ -62,7 +67,7 @@ sind eingebaut.
 - Ein Fehler in einem Spielschritt konnte die Bildrate dauerhaft senken.
 - Vibrieren vor dem ersten Antippen erzeugte eine Browser-Warnung.
 
-## 0.1.0 – 2026-11-16
+## 0.1.0 – 2026-11-17
 
 Erste Fassung nach dem `/prototype`-Ablauf von Claude Code Game Studios.
 
