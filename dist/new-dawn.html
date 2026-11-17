@@ -7,7 +7,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#070b1f">
-<meta name="description" content="New Dawn – ein Lichträtsel: Lenke farbige Lichtstrahlen mit Spiegeln zu Kristallen. Läuft offline.">
+<meta name="description" content="New Dawn – ein Lichträtsel / a light puzzle: Lenke farbige Lichtstrahlen mit Spiegeln zu Kristallen. Guide colored light with mirrors into crystals. Läuft offline / plays offline.">
 <title>New Dawn</title>
 <style>
   :root { --bg: #070b1f; --ink: #eef1ff; color-scheme: dark; }
@@ -64,8 +64,6 @@ const STEP = 1 / 60;            // simulation step in seconds; motion is per sec
 let W = 1280, H = 720;          // logical size; fit() sets it from the window (short side 440..760)
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 const TITLE = 'New Dawn';
-const CONTROLS = ['Tippen oder Klicken: Spiegel setzen, drehen, entfernen',
-  'Tastatur: Pfeile + Leertaste · Z zurück · R neu · H Hinweis · M Ton']; // no-break spaces keep a key with its action
 const TOUCH = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches); // phones and tablets: no keyboard hints
 const clock = window.GAME_CLOCK || { now: () => performance.now() / 1000 }; // a check may inject one
 const CHEAP = params.get('render') === 'cheap'; // a headless shot or check: draws at pixel ratio 1
@@ -209,7 +207,7 @@ function buzz(ms) { // only after the player has touched the page: browsers refu
 
 // ---- Save: offline, in this browser -----------------------------------------------------
 const SAVE_KEY = 'newdawn.save.v1';
-const emptySave = () => ({ stars: {}, daily: {}, endless: 0, muted: false });
+const emptySave = () => ({ stars: {}, daily: {}, endless: 0, muted: false, lang: null });
 /** Keeps only well-formed entries of a stored save, so an old or damaged save can never break the game. */
 function cleanSave(s) {
   const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
@@ -221,6 +219,7 @@ function cleanSave(s) {
   return {
     stars: pick(s.stars, k => /^\d+$/.test(k)), daily: pick(s.daily, k => /^\d{4}-\d\d-\d\d$/.test(k)),
     endless: Math.max(0, Math.floor(+s.endless) || 0), muted: s.muted === true,
+    lang: s.lang === 'de' || s.lang === 'en' ? s.lang : null,
   };
 }
 const FRESH = params.get('fresh') === '1'; // a test run: starts empty and never overwrites the real save
@@ -243,25 +242,107 @@ const bitsOf = m => [RED, GRN, BLU].filter(b => m & b);
 // The campaign: three chapters, night to dawn. Each level is generated from its rules and a
 // fixed seed, and the generator proves it can be solved before it is shown.
 const CHAPTERS = [
-  { name: 'Mitternacht', theme: 0, accent: [150, 170, 255] },
-  { name: 'Blaue Stunde', theme: 1, accent: [110, 225, 255] },
-  { name: 'Morgenrot', theme: 2, accent: [255, 176, 136] },
+  { theme: 0, accent: [150, 170, 255] },
+  { theme: 1, accent: [110, 225, 255] },
+  { theme: 2, accent: [255, 176, 136] },
 ];
-const TIPS = {
-  tap: 'Tippe auf das umrandete Feld im Strahl. Nochmal tippen dreht den Spiegel.',
-  two: 'Zwei Knicke nötig. Ein dritter Tipp auf einen Spiegel entfernt ihn wieder.',
-  par: 'Par = Spiegel der Lösung. Mit Par und ohne Hinweis gibt es drei Sterne.',
-  colors: 'Jeder Kristall will genau seine Farbe.',
-  cross: 'Spiegel sind beidseitig: Sie lenken jeden Strahl ab. Kreuzen ist erlaubt.',
-  fixed: 'Goldene Spiegel sind fest verbaut. Nutze sie!',
-  mix: 'Gelb = Rot + Grün. Führe beide Strahlen in denselben Kristall.',
-  magenta: 'Magenta = Rot + Blau.',
-  cyan: 'Cyan = Grün + Blau.',
-  wrong: 'Trifft eine falsche Farbe, flackert der Kristall. Halte fremdes Licht fern.',
-  filter: 'Farbglas lässt nur Licht seiner eigenen Farbe durch.',
-  white: 'Weiß = Rot + Grün + Blau. Alle drei müssen hinein.',
-  final: 'Das letzte Rätsel vor Sonnenaufgang.',
+const chapterOf = li => Math.min(CHAPTERS.length - 1, Math.floor(li / 10)); // levels past 30 stay in the last chapter
+
+// ---- Words: German and English ---------------------------------------------------------------
+// Every text the player sees lives here. A new language is one more block with the same keys.
+const STR = {
+  de: {
+    aria: 'New Dawn – ein Lichträtsel. Lenke Licht mit Spiegeln zu den Kristallen.',
+    tagline: 'Ein Lichträtsel',
+    controls: ['Tippen oder Klicken: Spiegel setzen, drehen, entfernen', // no-break spaces keep a key with its action
+      'Tastatur: Pfeile + Leertaste · Z zurück · R neu · H Hinweis · M Ton · L Sprache'],
+    chapters: ['Mitternacht', 'Blaue Stunde', 'Morgenrot'],
+    tips: {
+      tap: 'Tippe auf das umrandete Feld im Strahl. Nochmal tippen dreht den Spiegel.',
+      two: 'Zwei Knicke nötig. Ein dritter Tipp auf einen Spiegel entfernt ihn wieder.',
+      par: 'Par = Spiegel der Lösung. Mit Par und ohne Hinweis gibt es drei Sterne.',
+      colors: 'Jeder Kristall will genau seine Farbe.',
+      cross: 'Spiegel sind beidseitig: Sie lenken jeden Strahl ab. Kreuzen ist erlaubt.',
+      fixed: 'Goldene Spiegel sind fest verbaut. Nutze sie!',
+      mix: 'Gelb = Rot + Grün. Führe beide Strahlen in denselben Kristall.',
+      magenta: 'Magenta = Rot + Blau.',
+      cyan: 'Cyan = Grün + Blau.',
+      wrong: 'Trifft eine falsche Farbe, flackert der Kristall. Halte fremdes Licht fern.',
+      filter: 'Farbglas lässt nur Licht seiner eigenen Farbe durch.',
+      white: 'Weiß = Rot + Grün + Blau. Alle drei müssen hinein.',
+      final: 'Das letzte Rätsel vor Sonnenaufgang.',
+    },
+    play: 'Spielen', playOn: 'Weiterspielen', cont: n => `Weiter · Level ${n}`,
+    levelsBtn: (a, b) => `Level wählen · ${a}/${b}`, daily: 'Tagesrätsel', dailyDone: 'Tagesrätsel gelöst',
+    endlessBtn: n => `Endlos · ${n} gelöst`,
+    pickLevel: 'Level wählen', level: n => `Level ${n}`, chapter: (n, name) => `Kapitel ${n} · ${name}`,
+    endless: n => `Endlos · Rätsel ${n}`, solvedN: n => `${n} gelöst`,
+    date: key => key.split('-').reverse().join('.'),
+    stock: (f, p) => `${f} frei · Par ${p}`,
+    menu: 'Menü', undo: 'Zurück', reset: 'Neu', hint: n => `Hinweis ${n}`, sound: 'Ton',
+    solved: 'Gelöst!', dailySolved: 'Tagesrätsel gelöst!', sunrise: 'Die Sonne geht auf!',
+    stats: (u, p, h) => `Spiegel: ${u} · Par ${p}` + (h ? ` · Hinweise: ${h}` : ''),
+    underPar: 'Genial – unter Par!', perfect: 'Perfekt gelöst.',
+    tryPar: p => `Schaffst du es mit ${p} Spiegel${p === 1 ? '' : 'n'}?`, noHint: 'Ohne Hinweis gibt es drei Sterne.',
+    endlessMsg: n => `${n} Rätsel gelöst – es wird schwerer.`,
+    finalMsg: 'Du hast den Morgen gebracht.', finalMore: 'Tagesrätsel und Endlos warten auf dich.',
+    toTitle: 'Zum Titel', nextPuzzle: 'Nächstes Rätsel', next: 'Weiter', again: 'Nochmal', levels: 'Levels',
+    figures: 'New Dawn · Figuren',
+    fig: ['Lichtquelle Rot', 'Lichtquelle Grün', 'Lichtquelle Blau', 'Kristall Rot', 'Kristall Gelb, leuchtet',
+      'Kristall Weiß, halb', 'Spiegel', 'Fester Spiegel', 'Mauer', 'Farbglas Blau', 'Hinweis', 'Kristall, falsche Farbe'],
+  },
+  en: {
+    aria: 'New Dawn – a light puzzle. Guide light with mirrors into the crystals.',
+    tagline: 'A light puzzle',
+    controls: ['Tap or click: place, turn and remove mirrors',
+      'Keyboard: arrows + space · Z undo · R reset · H hint · M sound · L language'],
+    chapters: ['Midnight', 'Blue Hour', 'Daybreak'],
+    tips: {
+      tap: 'Tap the outlined cell in the beam. Tap again to turn the mirror.',
+      two: 'Two turns needed. A third tap on a mirror removes it.',
+      par: 'Par = mirrors in the solution. Solve at par without a hint for three stars.',
+      colors: 'Each crystal wants exactly its own color.',
+      cross: 'Mirrors are two-sided: they turn every beam that hits them. Beams may cross.',
+      fixed: 'Gold mirrors are fixed in place. Use them!',
+      mix: 'Yellow = red + green. Lead both beams into the same crystal.',
+      magenta: 'Magenta = red + blue.',
+      cyan: 'Cyan = green + blue.',
+      wrong: 'A wrong color makes the crystal flicker. Keep stray light out.',
+      filter: 'Colored glass lets only light of its own color through.',
+      white: 'White = red + green + blue. All three must go in.',
+      final: 'The last puzzle before sunrise.',
+    },
+    play: 'Play', playOn: 'Keep playing', cont: n => `Continue · Level ${n}`,
+    levelsBtn: (a, b) => `Levels · ${a}/${b}`, daily: 'Daily puzzle', dailyDone: 'Daily puzzle solved',
+    endlessBtn: n => `Endless · ${n} solved`,
+    pickLevel: 'Choose a level', level: n => `Level ${n}`, chapter: (n, name) => `Chapter ${n} · ${name}`,
+    endless: n => `Endless · Puzzle ${n}`, solvedN: n => `${n} solved`,
+    date: key => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); },
+    stock: (f, p) => `${f} left · Par ${p}`,
+    menu: 'Menu', undo: 'Undo', reset: 'Reset', hint: n => `Hint ${n}`, sound: 'Sound',
+    solved: 'Solved!', dailySolved: 'Daily puzzle solved!', sunrise: 'The sun rises!',
+    stats: (u, p, h) => `Mirrors: ${u} · Par ${p}` + (h ? ` · Hints: ${h}` : ''),
+    underPar: 'Brilliant – under par!', perfect: 'Perfectly solved.',
+    tryPar: p => `Can you do it with ${p} mirror${p === 1 ? '' : 's'}?`, noHint: 'Solve it without a hint for three stars.',
+    endlessMsg: n => `${n} puzzle${n === 1 ? '' : 's'} solved – it gets harder.`,
+    finalMsg: 'You brought back the morning.', finalMore: 'The daily puzzle and endless mode await you.',
+    toTitle: 'Back to title', nextPuzzle: 'Next puzzle', next: 'Next', again: 'Retry', levels: 'Levels',
+    figures: 'New Dawn · Pieces',
+    fig: ['Red lens', 'Green lens', 'Blue lens', 'Red crystal', 'Yellow crystal, lit',
+      'White crystal, half lit', 'Mirror', 'Fixed mirror', 'Wall', 'Blue glass', 'Hint', 'Crystal, wrong color'],
+  },
 };
+const LANGS = Object.keys(STR);
+/** The language: ?lang= in the address, then the saved choice, then the browser's language (German or English). */
+let lang = LANGS.includes(params.get('lang')) ? params.get('lang')
+  : LANGS.includes(save.lang) ? save.lang : /^de\b/i.test(navigator.language || '') ? 'de' : 'en';
+const T = () => STR[lang];
+function applyLang() { document.documentElement.lang = lang; canvas.setAttribute('aria-label', T().aria); }
+/** Switches to the next language and remembers it. */
+function toggleLang() { lang = LANGS[(LANGS.indexOf(lang) + 1) % LANGS.length]; save.lang = lang; persist(); applyLang(); SFX.click(); }
+applyLang();
+
+// ---- The campaign: the level table --------------------------------------------------------
 // w,h: board; crys: crystals by colour; turns: mirrors per light path [min,max]; walls, fixed
 // (gold solution mirrors), decoy (gold mirrors in a beam), filters (colour glass); minPar: fewest
 // mirrors the answer needs (par is always the true minimum); cross: beams of the answer must cross
@@ -538,31 +619,30 @@ function reset() { // a fresh run of the current puzzle (or the first one)
 /** Starts a puzzle: mode campaign (li = level index), daily, or endless (li = puzzle number). */
 const DAILY_WEEK = [6, 8, 14, 16, 18, 23, 27]; // rules of these campaign levels, Monday (easy) to Sunday (hard)
 function startPuzzle(mode, li = 0) {
-  let spec, s, name, sub, theme, dayKey = null;
+  let spec, s, theme, dayKey = null;
   if (mode === 'daily') {
     const key = todayKey(), n = +key.replace(/-/g, ''), [yy, mm, dd] = key.split('-').map(Number);
     const wd = (new Date(yy, mm - 1, dd).getDay() + 6) % 7;
     spec = LEVELS[Math.min(DAILY_WEEK[wd], Math.max(3, nextLevel() - 1))]; // never rules the player has not met yet
-    s = n; dayKey = key; name = 'Tagesrätsel'; sub = key.split('-').reverse().join('.'); theme = 3; li = 0;
+    s = n; dayKey = key; theme = 3; li = 0;
   } else if (mode === 'endless') {
     li = Math.max(0, li | 0);
     let k = Math.min(LEVELS.length - 1, tune.endlessStart + li * tune.endlessRamp);
     while (LEVELS[k].tip && k < LEVELS.length - 1) k++; // tutorials teach one idea; endless skips them
     spec = LEVELS[k];
-    s = 50000 + li * 7717 + CONFIG.seed; name = `Endlos · Rätsel ${li + 1}`; sub = `${save.endless || 0} gelöst`; theme = 3;
+    s = 50000 + li * 7717 + CONFIG.seed; theme = 3;
   } else {
     li = clamp(li | 0, 0, LEVELS.length - 1); spec = LEVELS[li];
     s = CONFIG.seed * 100003 + li * 7919 + 11;
-    const ch = CHAPTERS[Math.min(CHAPTERS.length - 1, Math.floor(li / 10))]; // levels past 30 stay in the last chapter
-    name = `Level ${li + 1}`; sub = `Kapitel ${CHAPTERS.indexOf(ch) + 1} · ${ch.name}`; theme = ch.theme;
+    theme = CHAPTERS[chapterOf(li)].theme;
   }
   const lv = generate(spec, s);
   state = {
-    t: 0, score: 0, gained: '', mode, li, lv, name, sub, theme, dayKey,
+    t: 0, score: 0, gained: '', mode, li, lv, theme, dayKey,
     placed: new Int8Array(lv.w * lv.h), undo: [], hint: null, hintsUsed: 0, hintFlash: 0,
     cur: { x: Math.floor(lv.w / 2), y: Math.floor(lv.h / 2) }, showCursor: false,
     won: false, winT: 0, resT: 0, stars: 0, used: 0, invShake: 0, tileShake: { i: -1, t: 0 },
-    glow: new Float32Array(lv.w * lv.h), tip: mode === 'campaign' ? TIPS[spec.tip] || '' : '',
+    glow: new Float32Array(lv.w * lv.h),
     inventory: lv.par + tune.spareMirrors, sounded: 0, L: null,
   };
   if (mode === 'campaign' && li === 0) state.hint = { ...lv.sol[0], free: true }; // the first move is shown
@@ -636,6 +716,15 @@ function useHint() {
 }
 function undoMove() { if (state.won || !state.undo.length) { SFX.deny(); return; } state.placed = state.undo.pop(); SFX.remove(); afterMove(); }
 function restartBoard() { if (state.won || !countUsed()) return; pushUndo(); state.placed = new Int8Array(state.placed.length); SFX.remove(); afterMove(); }
+/** The puzzle's name, subtitle and tip in the current language. */
+function puzzleName(st) { const L = T(); return st.mode === 'daily' ? L.daily : st.mode === 'endless' ? L.endless(st.li + 1) : L.level(st.li + 1); }
+function puzzleSub(st) {
+  const L = T();
+  if (st.mode === 'daily') return L.date(st.dayKey);
+  if (st.mode === 'endless') return L.solvedN(save.endless || 0);
+  const ci = chapterOf(st.li); return L.chapter(ci + 1, L.chapters[ci]);
+}
+function puzzleTip(st) { return st.mode === 'campaign' ? T().tips[st.lv.spec.tip] || '' : ''; }
 function toMenu() { if (state && state.mode === 'campaign') goScene('levels', state.li); else goScene('title'); }
 function goNext() {
   if (state.mode === 'campaign') {
@@ -764,12 +853,12 @@ function drawSky(t) {
 /** Where the board, the tip and the buttons go: portrait, landscape, or short landscape (phones). */
 function playLayout() {
   const lv = state.lv, land = W > H * 1.12, TIP_LH = 21;
-  const tipLines = (w, max) => state.tip ? Math.min(max, wrap(state.tip, Math.min(w, 640) - 28, 17, 500).length) : 0;
+  const tip = puzzleTip(state), tipLines = (w, max) => tip ? Math.min(max, wrap(tip, Math.min(w, 640) - 28, 17, 500).length) : 0;
   let cs, bx, by, tipBox, mode;
   if (land && H < 560 && W >= H * 1.6) { // phone on its side: the board takes the full height, the tip sits right
     mode = 'short';
-    ctx.font = `800 28px ${FONT}`; const nw = ctx.measureText(state.name).width; ctx.font = `600 16px ${FONT}`;
-    const left = Math.max(132, 18 + Math.max(nw, ctx.measureText(state.sub).width) + 24);
+    ctx.font = `800 28px ${FONT}`; const nw = ctx.measureText(puzzleName(state)).width; ctx.font = `600 16px ${FONT}`;
+    const left = Math.max(132, 18 + Math.max(nw, ctx.measureText(puzzleSub(state)).width) + 24);
     const rc = Math.min(260, Math.round(W * 0.26)), ay = 14, ah = H - 28, aw = W - left - rc - 28;
     cs = Math.floor(Math.min(aw / lv.w, ah / lv.h, 100));
     bx = Math.round(left + (aw - cs * lv.w) / 2); by = Math.round(ay + (ah - cs * lv.h) / 2);
@@ -1107,6 +1196,19 @@ function button(x, y, w, h, label, action, o = {}) {
   ctx.restore();
   return b;
 }
+/** The language switch on the title: DE | EN, the active one filled; a tap (or L) switches. */
+function langSwitch(x, y) {
+  const w = 104, h = 50, b = { x, y, w, h, action: toggleLang };
+  ui.buttons.push(b);
+  const hov = pointer.inside && pointer.mouse && inRect(pointer, b);
+  rr(x, y, w, h, 18); ctx.fillStyle = hov ? 'rgba(46,50,104,0.9)' : 'rgba(16,18,50,0.74)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1.5; ctx.stroke();
+  LANGS.forEach((l, k) => {
+    const cx = x + w * (k + 0.5) / LANGS.length, on = l === lang;
+    if (on) { rr(x + 5 + k * (w - 10) / LANGS.length, y + 5, (w - 10) / LANGS.length, h - 10, 14); ctx.fillStyle = 'rgba(255,214,150,0.92)'; ctx.fill(); }
+    text(l.toUpperCase(), cx, y + h / 2 + 1, 17, on ? '#2b0f2e' : 'rgba(238,241,255,0.75)', 'center', 800);
+  });
+}
 function smallStars(x, y, r, n) {
   for (let k = 0; k < 3; k++) {
     const sx = x + (k - 1) * r * 2.4;
@@ -1135,21 +1237,21 @@ const scenes = {
     draw(t) {
       drawSky(t); ui.buttons = [];
       const items = [
-        ['Lichtquelle Rot', (x, y, s) => drawEmitter(x, y, s, RED, 0, t)],
-        ['Lichtquelle Grün', (x, y, s) => drawEmitter(x, y, s, GRN, 1, t)],
-        ['Lichtquelle Blau', (x, y, s) => drawEmitter(x, y, s, BLU, 3, t)],
-        ['Kristall Rot', (x, y, s) => drawCrystal(x, y, s, RED, 0, 'off', 0, t, 1)],
-        ['Kristall Gelb, leuchtet', (x, y, s) => drawCrystal(x, y, s, YEL, YEL, 'lit', 1, t, 2)],
-        ['Kristall Weiß, halb', (x, y, s) => drawCrystal(x, y, s, WHT, RED | BLU, 'part', 0.2, t, 3)],
-        ['Spiegel', (x, y, s) => drawMirror(x, y, s, 1, 'player', t)],
-        ['Fester Spiegel', (x, y, s) => drawMirror(x, y, s, 2, 'fixed', t)],
-        ['Mauer', (x, y, s) => drawWall(x - s / 2, y - s / 2, s)],
-        ['Farbglas Blau', (x, y, s) => drawFilter(x, y, s, BLU, t)],
-        ['Hinweis', (x, y, s) => drawMirror(x, y, s, 1, 'ghost', t)],
-        ['Kristall, falsche Farbe', (x, y, s) => drawCrystal(x, y, s, CYA, RED, 'wrong', 0, t, 4)],
+        [T().fig[0], (x, y, s) => drawEmitter(x, y, s, RED, 0, t)],
+        [T().fig[1], (x, y, s) => drawEmitter(x, y, s, GRN, 1, t)],
+        [T().fig[2], (x, y, s) => drawEmitter(x, y, s, BLU, 3, t)],
+        [T().fig[3], (x, y, s) => drawCrystal(x, y, s, RED, 0, 'off', 0, t, 1)],
+        [T().fig[4], (x, y, s) => drawCrystal(x, y, s, YEL, YEL, 'lit', 1, t, 2)],
+        [T().fig[5], (x, y, s) => drawCrystal(x, y, s, WHT, RED | BLU, 'part', 0.2, t, 3)],
+        [T().fig[6], (x, y, s) => drawMirror(x, y, s, 1, 'player', t)],
+        [T().fig[7], (x, y, s) => drawMirror(x, y, s, 2, 'fixed', t)],
+        [T().fig[8], (x, y, s) => drawWall(x - s / 2, y - s / 2, s)],
+        [T().fig[9], (x, y, s) => drawFilter(x, y, s, BLU, t)],
+        [T().fig[10], (x, y, s) => drawMirror(x, y, s, 1, 'ghost', t)],
+        [T().fig[11], (x, y, s) => drawCrystal(x, y, s, CYA, RED, 'wrong', 0, t, 4)],
       ];
       const cols = W > H ? 6 : 3, cw = (W - 40) / cols, s = Math.min(110, cw - 30), rh = s + 56;
-      text('New Dawn · Figuren', W / 2, 40, 26, '#fff', 'center', 800);
+      text(T().figures, W / 2, 40, 26, '#fff', 'center', 800);
       items.forEach(([name, fn], k) => {
         const x = 20 + (k % cols + 0.5) * cw, y = 92 + Math.floor(k / cols) * rh + s / 2;
         rr(x - s / 2, y - s / 2, s, s, s * 0.16); ctx.fillStyle = 'rgba(7,9,26,0.75)'; ctx.fill();
@@ -1183,15 +1285,15 @@ const scenes = {
       text('NEW DAWN', cx, ty, fs, tg, 'center', 800);
       ctx.restore();
       const sy = ty + fs * 0.72;
-      text('Ein Lichträtsel', cx, sy, 20, 'rgba(232,228,255,0.88)', 'center', 500);
-      const n = solvedCount(), daily = save.daily[todayKey()];
+      text(T().tagline, cx, sy, 20, 'rgba(232,228,255,0.88)', 'center', 500);
+      const n = solvedCount(), daily = save.daily[todayKey()], L10 = T();
       const labels = [
-        [n === 0 ? 'Spielen' : n >= LEVELS.length ? 'Weiterspielen' : `Weiter · Level ${nextLevel() + 1}`, { primary: true, size: 21 }],
-        [`Level wählen · ${starCount()}/${LEVELS.length * 3}`, { icon: 'menu', iconLeft: true, size: 19, solid: true }],
-        [daily ? 'Tagesrätsel gelöst' : 'Tagesrätsel', { icon: daily ? 'check' : 'sun', iconLeft: true, size: 19, solid: true }],
-        [`Endlos · ${save.endless || 0} gelöst`, { icon: 'loop', iconLeft: true, size: 19, solid: true }],
+        [n === 0 ? L10.play : n >= LEVELS.length ? L10.playOn : L10.cont(nextLevel() + 1), { primary: true, size: 21 }],
+        [L10.levelsBtn(starCount(), LEVELS.length * 3), { icon: 'menu', iconLeft: true, size: 19, solid: true }],
+        [daily ? L10.dailyDone : L10.daily, { icon: daily ? 'check' : 'sun', iconLeft: true, size: 19, solid: true }],
+        [L10.endlessBtn(save.endless || 0), { icon: 'loop', iconLeft: true, size: 19, solid: true }],
       ];
-      const ctrl = (TOUCH ? CONTROLS.slice(0, 1) : CONTROLS).flatMap(c => wrap(c, W - 40, 15));
+      const ctrl = (TOUCH ? L10.controls.slice(0, 1) : L10.controls).flatMap(c => wrap(c, W - 40, 15));
       const gap = 12, by0 = sy + 32, avail = H - by0 - (ctrl.length * 21 + 30);
       if (avail >= 4 * 46 + 3 * gap || W < 600) { // one column
         const bw = Math.min(330, W - 60), bh = clamp((avail - 3 * gap) / 4, 46, 58);
@@ -1202,6 +1304,7 @@ const scenes = {
       }
       ctrl.forEach((l, k2) => text(l, cx, H - 22 - (ctrl.length - 1 - k2) * 21, 15, 'rgba(232,236,255,0.85)', 'center', 500));
       button(W - 62, 12, 50, 50, '', toggleMute, { icon: muted ? 'mute' : 'sound' });
+      langSwitch(12, 12);
     },
   },
   levels: {
@@ -1217,7 +1320,7 @@ const scenes = {
     draw(t) {
       drawSky(t); ui.buttons = [];
       button(16, 14, 52, 52, '', () => { SFX.click(); goScene('title'); }, { icon: 'back' });
-      text('Level wählen', W / 2, 40, 26, '#fff', 'center', 800);
+      text(T().pickLevel, W / 2, 40, 26, '#fff', 'center', 800);
       text(`${starCount()} / ${LEVELS.length * 3}`, W - 46, 40, 18, '#ffd98a', 'right', 700);
       starPath(W - 28, 40, 10); ctx.fillStyle = '#ffd98a'; ctx.fill();
       const land = W > H * 1.12, cols = land ? 10 : 5, rowsPer = 10 / cols;
@@ -1230,7 +1333,7 @@ const scenes = {
       let y = top;
       CHAPTERS.forEach((ch, ci) => {
         const got = [...Array(10).keys()].reduce((s, k) => s + (save.stars[ci * 10 + k] || 0), 0);
-        text(`Kapitel ${ci + 1} · ${ch.name}`, gx, y + headH / 2, 18, css(ch.accent), 'left', 700);
+        text(T().chapter(ci + 1, T().chapters[ci]), gx, y + headH / 2, 18, css(ch.accent), 'left', 700);
         text(`${got}/30`, gx + gw, y + headH / 2, 16, 'rgba(255,230,170,0.9)', 'right', 600);
         y += headH;
         for (let k = 0; k < 10; k++) {
@@ -1327,7 +1430,7 @@ const scenes = {
       const pg = ctx.createLinearGradient(0, py, 0, py + ph); pg.addColorStop(0, 'rgba(34,30,78,0.96)'); pg.addColorStop(1, 'rgba(14,14,40,0.96)');
       ctx.fillStyle = pg; ctx.fill(); ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
       ctx.strokeStyle = 'rgba(255,214,170,0.45)'; ctx.lineWidth = 1.5; ctx.stroke();
-      const title = final ? 'Die Sonne geht auf!' : st.mode === 'daily' ? 'Tagesrätsel gelöst!' : 'Gelöst!';
+      const L10 = T(), title = final ? L10.sunrise : st.mode === 'daily' ? L10.dailySolved : L10.solved;
       text(title, W / 2, py + 48, final ? 30 : 34, '#fff3dc', 'center', 800);
       for (let k = 0; k < 3; k++) { // stars pop in one by one
         const at = 0.35 + k * 0.28, f = clamp((st.resT - at) / 0.25, 0, 1), got = k < st.stars;
@@ -1337,19 +1440,19 @@ const scenes = {
         else { ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1.5; ctx.stroke(); }
       }
       const lv = st.lv;
-      text(`Spiegel: ${st.used} · Par ${lv.par}` + (st.hintsUsed ? ` · Hinweise: ${st.hintsUsed}` : ''), W / 2, py + 168, 18, '#e3e6ff', 'center', 600);
-      let msg = st.used < lv.par ? 'Genial – unter Par!' : st.stars === 3 ? 'Perfekt gelöst.' : st.used > lv.par ? `Schaffst du es mit ${lv.par} Spiegel${lv.par === 1 ? '' : 'n'}?` : 'Ohne Hinweis gibt es drei Sterne.';
-      if (st.mode === 'endless') msg = `${save.endless} Rätsel gelöst – es wird schwerer.`;
-      if (final) msg = 'Du hast den Morgen gebracht.';
+      text(L10.stats(st.used, lv.par, st.hintsUsed), W / 2, py + 168, 18, '#e3e6ff', 'center', 600);
+      let msg = st.used < lv.par ? L10.underPar : st.stars === 3 ? L10.perfect : st.used > lv.par ? L10.tryPar(lv.par) : L10.noHint;
+      if (st.mode === 'endless') msg = L10.endlessMsg(save.endless);
+      if (final) msg = L10.finalMsg;
       text(msg, W / 2, py + 198, 17, '#ffd9a8', 'center', 600);
-      if (final) text('Tagesrätsel und Endlos warten auf dich.', W / 2, py + 224, 16, '#cfd4ff', 'center', 500);
+      if (final) text(L10.finalMore, W / 2, py + 224, 16, '#cfd4ff', 'center', 500);
       const bw = pw - 60, bx = px + 30; let by = py + ph - 140;
-      const nextLabel = final || st.mode === 'daily' ? 'Zum Titel' : st.mode === 'endless' ? 'Nächstes Rätsel' : 'Weiter';
+      const nextLabel = final || st.mode === 'daily' ? L10.toTitle : st.mode === 'endless' ? L10.nextPuzzle : L10.next;
       button(bx, by, bw, 54, nextLabel, RESULT_ACTS[0], { primary: true, size: 21, focus: ui.focus === 0 && !pointer.mouse });
       by += 66;
       const hw = (bw - 12) / 2;
-      button(bx, by, hw, 48, 'Nochmal', RESULT_ACTS[1], { size: 18, focus: ui.focus === 1 && !pointer.mouse });
-      button(bx + hw + 12, by, hw, 48, st.mode === 'campaign' ? 'Levels' : 'Menü', RESULT_ACTS[2], { size: 18, focus: ui.focus === 2 && !pointer.mouse });
+      button(bx, by, hw, 48, L10.again, RESULT_ACTS[1], { size: 18, focus: ui.focus === 1 && !pointer.mouse });
+      button(bx + hw + 12, by, hw, 48, st.mode === 'campaign' ? L10.levels : L10.menu, RESULT_ACTS[2], { size: 18, focus: ui.focus === 2 && !pointer.mouse });
       ctx.restore();
     },
   },
@@ -1361,19 +1464,19 @@ const RESULT_ACTS = [
 ];
 
 function drawHud(L, t) {
-  const st = state, lv = st.lv;
-  text(st.name, 18, 34, 28, '#ffffff', 'left', 800);
-  text(st.sub, 18, 64, 16, 'rgba(220,226,255,0.85)', 'left', 600);
+  const st = state, lv = st.lv, L10 = T(), name = puzzleName(st), tip = puzzleTip(st);
+  text(name, 18, 34, 28, '#ffffff', 'left', 800);
+  text(puzzleSub(st), 18, 64, 16, 'rgba(220,226,255,0.85)', 'left', 600);
   // the mirror stock: one bar per mirror, bright while still free; packed tighter when the name needs the room
   const inv = st.inventory, free = Math.max(0, inv - st.used);
   const sh = st.invShake > 0 ? Math.sin(st.invShake * 50) * 6 : 0;
-  ctx.font = `800 28px ${FONT}`; const nameR = 18 + ctx.measureText(st.name).width;
+  ctx.font = `800 28px ${FONT}`; const nameR = 18 + ctx.measureText(name).width;
   const ix = W - 18 + sh, n = inv, iw = clamp((ix - nameR - 14) / Math.max(1, n), 8, 22);
   for (let k = 0; k < n; k++) icon('mirror', ix - (n - k - 0.5) * iw, 32, Math.min(22, iw + 6), k < free ? '#e8eeff' : 'rgba(232,238,255,0.22)');
-  text(`${free} frei · Par ${lv.par}`, ix, 64, 16, st.used > lv.par ? '#ffc39a' : 'rgba(220,226,255,0.85)', 'right', 600);
-  if (st.tip && scene !== 'results') { // the tip for this level
+  text(L10.stock(free, lv.par), ix, 64, 16, st.used > lv.par ? '#ffc39a' : 'rgba(220,226,255,0.85)', 'right', 600);
+  if (tip && scene !== 'results') { // the tip for this level
     const tb = L.tipBox, bw = Math.min(tb.w, 640), lh = 21;
-    const lines = wrap(st.tip, bw - 28, 17, 500).slice(0, tb.lines);
+    const lines = wrap(tip, bw - 28, 17, 500).slice(0, tb.lines);
     const bh = lines.length * lh + 14, bx = tb.x + (tb.w - bw) / 2, byy = tb.y + (tb.h - bh) / 2;
     ctx.save(); ctx.globalAlpha = ease(st.t / 0.6);
     rr(bx, byy, bw, bh, 14); ctx.fillStyle = 'rgba(255,255,255,0.075)'; ctx.fill(); ctx.strokeStyle = 'rgba(255,220,170,0.28)'; ctx.lineWidth = 1; ctx.stroke();
@@ -1382,11 +1485,11 @@ function drawHud(L, t) {
   }
   const hintsLeft = Math.max(0, tune.maxHints - st.hintsUsed);
   const defs = [
-    ['menu', 'Menü', () => { SFX.click(); toMenu(); }],
-    ['undo', 'Zurück', undoMove],
-    ['reset', 'Neu', restartBoard],
-    ['hint', `Hinweis ${hintsLeft}`, useHint],
-    [muted ? 'mute' : 'sound', 'Ton', toggleMute],
+    ['menu', L10.menu, () => { SFX.click(); toMenu(); }],
+    ['undo', L10.undo, undoMove],
+    ['reset', L10.reset, restartBoard],
+    ['hint', L10.hint(hintsLeft), useHint],
+    [muted ? 'mute' : 'sound', L10.sound, toggleMute],
   ];
   if (L.land) {
     const bw = 96, gap = 10, x = 18, bh = Math.min(70, Math.floor((H - 96 - 12 - gap * 4) / 5)), y0 = Math.max(96, (H - (bh * 5 + gap * 4)) / 2);
@@ -1402,6 +1505,7 @@ function drawHud(L, t) {
 function step() {
   try {
     if (pressed('KeyM')) { toggleMute(); hit.delete('KeyM'); }
+    if (pressed('KeyL') && (scene === 'title' || scene === 'levels')) toggleLang();
     for (const p of taps.splice(0)) {
       const sc = scene, st = state;
       const b = [...ui.buttons].reverse().find(bb => inRect(p, bb));

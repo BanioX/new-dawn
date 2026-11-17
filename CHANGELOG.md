@@ -2,6 +2,15 @@
 
 Alle nennenswerten Änderungen an New Dawn, die neueste zuerst.
 
+## 0.4.0 – 2026-11-17
+
+### Neu
+- **Englisch:** Das ganze Spiel gibt es jetzt auf Deutsch und Englisch. Es wählt die Sprache des
+  Browsers; umschalten mit dem Knopf `DE | EN` im Titelbild oder der Taste `L`, die Wahl wird
+  gespeichert. `?lang=en` oder `?lang=de` in der Adresse erzwingt eine Sprache.
+- Alle Texte stehen in einer Tabelle `STR`; eine weitere Sprache ist ein zusätzlicher Block.
+- Englisches README (`README.en.md`).
+
 ## 0.3.0 – 2026-11-17
 
 ### Neu

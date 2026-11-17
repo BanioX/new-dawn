@@ -63,7 +63,7 @@ gehören aber nicht zur Lösung.
 | `cross` | so oft müssen sich die Lösungsstrahlen mindestens kreuzen |
 | `needFilter` | ohne das Glas gäbe es eine kürzere Lösung, das Glas zählt also |
 | `firstTurn` | der erste Lösungsspiegel steht so (`2` = `\`), damit er gedreht werden muss |
-| `tip` | Schlüssel des Tipps aus `TIPS`; er steht in der Kampagne über dem Brett (Handy quer: rechts daneben). Level mit `tip` gelten als Lehrlevel, der Endlos-Modus überspringt sie |
+| `tip` | Schlüssel des Tipps; den Text gibt es in `STR.de.tips` und `STR.en.tips`; er steht in der Kampagne über dem Brett (Handy quer: rechts daneben). Level mit `tip` gelten als Lehrlevel, der Endlos-Modus überspringt sie |
 
 Jede Linse hat genau eine Grundfarbe. Ein Gelb-Kristall braucht also zwei Linsen (Rot und Grün),
 ein Weiß-Kristall drei.
@@ -80,6 +80,7 @@ Die Level-Auswahl zeigt drei Kapitel à zehn Level. Ein 31. Level und weitere ge
 Kapitel; du erreichst sie über „Weiter“ nach Level 30 oder direkt mit `?level=`.
 Das jeweils letzte Level der Tabelle ist das Finale mit dem Sonnenaufgang. Hängst du Level an,
 verschiebe `tip: 'final'` („Das letzte Rätsel vor Sonnenaufgang.“) von Level 30 in die neue letzte Zeile.
+Ein neuer Tipp braucht einen Schlüssel in beiden Sprachblöcken (`STR.de.tips` und `STR.en.tips`).
 
 Wird ein Brett zu schwer für den Generator (zu klein für so viele Kristalle, Knicke und Regeln),
 lockert er die Regeln stufenweise. Ob das passiert ist, zeigt `game.state.lv.relaxed` in der

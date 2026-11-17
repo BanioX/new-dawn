@@ -23,7 +23,9 @@ Suche nach `// ----`, um von Abschnitt zu Abschnitt zu springen.
 | Input | Tastatur und Zeiger; Antippen wird gesammelt und im nächsten Schritt verarbeitet |
 | Audio | Web-Audio-Synthesizer `note()` und alle Klänge in `SFX` |
 | Save | Spielstand im Browser, `cleanSave()`, `persist()` |
-| The game: light and colour | Farben, Richtungen, Spiegeltabelle, Kapitel, Tipps, die Level-Tabelle `LEVELS` |
+| The game: light and colour | Farben, Richtungen, Spiegeltabelle, Kapitel |
+| Words | alle Texte auf Deutsch und Englisch (`STR`), die Sprachwahl (`lang`, `T()`, `toggleLang()`) |
+| The campaign | die Level-Tabelle `LEVELS` |
 | The light | `simulate()`: verfolgt jeden Strahl |
 | The solver | `solvable()`: beweist, dass es keine kürzere Lösung gibt |
 | The generator | `tryGen()`, `flipX()`, `generate()`: baut lösbare Bretter |
@@ -162,6 +164,26 @@ Bildschirme (`scenes`): `title`, `levels`, `play`, `results` und `figures` (alle
 - Spielfiguren: `drawEmitter`, `drawCrystal`, `drawMirror`, `drawWall`, `drawFilter`, `hintPlate`.
   Jede Grundfarbe hat eine Form (`glyphPath`): Rot Dreieck, Grün Quadrat, Blau Raute.
 
+## Sprachen
+
+Alle Texte, die man im Spiel sieht, stehen in der Tabelle `STR`: ein Block `de` und ein Block `en`
+mit denselben Schlüsseln (Knöpfe, Tipps, Kapitelnamen, Ergebnis-Sätze, Figurennamen). Texte mit
+Zahlen sind kleine Funktionen, z. B. ``hint: n => `Hinweis ${n}` ``. Der Code holt die aktuelle
+Sprache mit `T()`, etwa `T().menu` oder `T().tips.mix`.
+
+Welche Sprache gilt, entscheidet in dieser Reihenfolge:
+
+1. `?lang=de` oder `?lang=en` in der Adresse,
+2. die gespeicherte Wahl (`lang` im Spielstand),
+3. die Sprache des Browsers: Deutsch, wenn sie mit `de` beginnt, sonst Englisch.
+
+`toggleLang()` schaltet um und speichert die Wahl. Das geht im Titelbild über den Knopf `DE | EN`
+und auf Titel und Level-Auswahl mit der Taste `L`. Namen, Untertitel und Tipps eines Rätsels werden
+beim Zeichnen übersetzt (`puzzleName`, `puzzleSub`, `puzzleTip`), deshalb wirkt ein Wechsel sofort.
+
+**Eine neue Sprache** ist ein weiterer Block in `STR` mit denselben Schlüsseln, z. B. `fr: { … }`.
+Der Knopf zeigt dann drei Kürzel und schaltet reihum.
+
 ## Klang
 
 Alle Klänge entstehen zur Laufzeit mit Web Audio, es gibt keine Audiodateien.
@@ -172,7 +194,7 @@ Ton startet erst nach der ersten Eingabe (Browser-Regel). `M` oder der Ton-Knopf
 Der Spielstand liegt im Browser unter dem Schlüssel `newdawn.save.v1`:
 
 ```json
-{ "stars": { "0": 3, "1": 2 }, "daily": { "2026-11-17": 3 }, "endless": 4, "muted": false }
+{ "stars": { "0": 3, "1": 2 }, "daily": { "2026-11-17": 3 }, "endless": 4, "muted": false, "lang": "en" }
 ```
 
 `stars` zählt Level ab 0. `cleanSave()` übernimmt nur gültige Einträge, ein beschädigter Spielstand
@@ -186,6 +208,7 @@ Adress-Parameter:
 |---|---|
 | `?level=12` | startet direkt Level 12 |
 | `?fresh=1` | ohne gespeicherten Fortschritt, schreibt nichts |
+| `?lang=en` | Sprache Englisch (`?lang=de` Deutsch), ohne die gespeicherte Wahl zu ändern |
 | `?scene=figures` | zeigt alle Spielfiguren mit Namen |
 | `?seed=5` | ändert nur den Zufall der Effekte, nicht die Level |
 | `?render=cheap` | zeichnet mit Pixeldichte 1 (für automatische Screenshots) |

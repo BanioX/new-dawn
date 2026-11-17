@@ -5,11 +5,13 @@ Erstelle mir ein smartes spiel das offline spielbar ist einfach codebar ist supe
 
 (Repo: new-dawn)
 
+After play: Kann ich es auch in Englisch haben bitte
+
 **Pitch:** Lenke farbige Lichtstrahlen mit Spiegeln durch eine nächtliche Kristallhöhle, mische Rot, Grün und Blau zu neuen Farben und bring jeden Kristall zum Leuchten – mit jedem Kapitel wird es Morgen. *(guessed)*
 
 **Genre:** grid puzzle (Licht lenken, Farben mischen) *(guessed)*
 
-**Controls:** Tippen/Klicken auf ein Feld: Spiegel setzen → drehen → entfernen; Rechtsklick entfernt. Tastatur: Pfeiltasten + Leertaste, Entf/Rücktaste/X entfernt, Z rückgängig, R neu starten, H Hinweis, M Ton, Esc Menü. *(guessed)*
+**Controls:** Tippen/Klicken auf ein Feld: Spiegel setzen → drehen → entfernen; Rechtsklick entfernt. Tastatur: Pfeiltasten + Leertaste, Entf/Rücktaste/X entfernt, Z rückgängig, R neu starten, H Hinweis, M Ton, L Sprache, Esc Menü. *(guessed)*
 
 **Question:** Macht es Spaß, Lichtstrahlen mit wenigen Spiegeln zu Farbkristallen zu lenken, wenn Farbmischung und sich kreuzende Strahlen echte Aha-Momente erzeugen? *(guessed)*
 
@@ -47,6 +49,7 @@ Ab Level 5 (ca. Minute 5) müssen sich Strahlen kreuzen, und ein Spiegel für Gr
 - [x] Synth-Sounds (Web Audio), Stummschalten
 - [x] Generator mit exaktem Löser: jedes Brett lösbar, Par = kleinste Spiegelzahl
 - [x] Formen pro Grundfarbe für Farbenblinde; Marker zeigen fehlende und falsche Farben
+- [x] Deutsch und Englisch, nach Browser-Sprache gewählt und umschaltbar
 
 ## Keep
 -

@@ -1,5 +1,7 @@
 # New Dawn – Ein Lichträtsel
 
+**Deutsch** · [English](README.en.md)
+
 Lenke farbige Lichtstrahlen mit Spiegeln durch die Nacht, mische Rot, Grün und Blau
 und bring jeden Kristall zum Leuchten. Mit jedem Kapitel wird es heller, bis die
 Sonne aufgeht.
@@ -14,6 +16,8 @@ Sonne aufgeht.
   `config.js`, jedes Level ist eine Zeile.
 - **Schön:** leuchtende Strahlen mit fließenden Lichtfunken, facettierte Kristalle,
   Sternenhimmel, Hügel und ein Sonnenaufgang. Alles wird im Code gezeichnet.
+- **Deutsch und Englisch:** Das Spiel wählt die Sprache deines Browsers; umschalten kannst du
+  jederzeit mit dem Knopf `DE | EN` im Titelbild oder der Taste `L`.
 
 ## Spielen
 
@@ -40,7 +44,7 @@ Sonne aufgeht.
 Farbenblind? Jede Grundfarbe hat zusätzlich eine Form: Rot ▲ Dreieck, Grün ■ Quadrat, Blau ◆ Raute.
 
 **Tastatur:** Pfeiltasten + Leertaste setzen und drehen · `Entf`, `Rücktaste` oder `X` entfernen ·
-`Z` oder `U` zurück · `R` neu · `H` Hinweis · `M` Ton · `Esc` Menü.
+`Z` oder `U` zurück · `R` neu · `H` Hinweis · `M` Ton · `L` Sprache (Titel und Level-Auswahl) · `Esc` Menü.
 Das gilt für deutsche und englische Tastaturen.
 
 ## Inhalt
@@ -72,9 +76,13 @@ CHANGELOG.md           was sich wann geändert hat
   Eine Zeile wie `{ w: 7, h: 7, crys: [YEL, BLU], turns: [1, 2], walls: 3, minPar: 4 }`
   beschreibt Brettgröße, Kristalle, Knicke pro Strahl, Mauern und die Mindestzahl Spiegel.
   Den Rest (Position, Lösung, Beweis) macht der Generator. Alle Felder: [docs/LEVELS.md](docs/LEVELS.md).
+- **Texte ändern oder eine Sprache hinzufügen:** Alle Texte, die man im Spiel sieht, stehen in der
+  Tabelle `STR` in `index.html`, ein Block pro Sprache (`de`, `en`). Eine neue Sprache ist ein
+  weiterer Block mit denselben Schlüsseln.
 - **Werte drehen:** `config.js` öffnen, Zahl ändern, Seite neu laden.
 - **Andere Level-Welt:** `seed` in `config.js` ändern, dann entstehen 30 neue Level.
-- **Testen:** `index.html?level=12` startet direkt Level 12, `?fresh=1` spielt ohne
+- **Testen:** `index.html?level=12` startet direkt Level 12, `?lang=en` oder `?lang=de` wählt die
+  Sprache, `?fresh=1` spielt ohne
   gespeicherten Fortschritt, `?scene=figures` zeigt alle Spielfiguren. Mehr in
   [docs/ARCHITEKTUR.md](docs/ARCHITEKTUR.md#testen).
 - **Einzeldatei neu bauen** nach jeder Änderung an `index.html` oder `config.js`:
