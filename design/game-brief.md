@@ -9,7 +9,7 @@ Erstelle mir ein smartes spiel das offline spielbar ist einfach codebar ist supe
 
 **Genre:** grid puzzle (Licht lenken, Farben mischen) *(guessed)*
 
-**Controls:** Tippen/Klicken auf ein Feld: Spiegel setzen → drehen → entfernen; Rechtsklick entfernt. Tastatur: Pfeiltasten + Leertaste, Z rückgängig, R neu starten, H Hinweis. *(guessed)*
+**Controls:** Tippen/Klicken auf ein Feld: Spiegel setzen → drehen → entfernen; Rechtsklick entfernt. Tastatur: Pfeiltasten + Leertaste, Entf/Rücktaste/X entfernt, Z rückgängig, R neu starten, H Hinweis, M Ton, Esc Menü. *(guessed)*
 
 **Question:** Macht es Spaß, Lichtstrahlen mit wenigen Spiegeln zu Farbkristallen zu lenken, wenn Farbmischung und sich kreuzende Strahlen echte Aha-Momente erzeugen? *(guessed)*
 
@@ -18,15 +18,15 @@ Erstelle mir ein smartes spiel das offline spielbar ist einfach codebar ist supe
 **Intent:** soft or no failure *(provisional)*
 
 ## Look and references
-- Look: dunkles Nachtglas; additive, leuchtende Lichtstrahlen mit fließenden Lichtfunken; facettierte Edelstein-Kristalle; silberne Spiegel, goldene feste Spiegel, Steinmauern, Farbglas-Filter; der Himmel wandert pro Kapitel von Mitternachtsblau über Blaue Stunde zu Morgenrot. Signature: beim Lösen geht hinter dem Brett eine Sonne auf. Every figure drawn, no emoji, no plain circles. *(guessed)*
+- Look: dunkles Nachtglas; additive, leuchtende Lichtstrahlen mit fließenden Lichtfunken; facettierte Edelstein-Kristalle; silberne Spiegel, goldene feste Spiegel, Steinmauern, Farbglas-Filter; der Himmel wandert pro Kapitel von Mitternachtsblau über Blaue Stunde zu Morgenrot. Signature: beim Lösen scheint die Sonne durch das Brett, beim Finale geht sie über dem Ergebnis auf. Jede Grundfarbe hat zusätzlich eine Form (Rot Dreieck, Grün Quadrat, Blau Raute) auf Linsen, Glas und den Markern unter jedem Kristall. Every figure drawn, no emoji, no plain circles. *(guessed)*
 - References: keine genannt; Werte aus klassischen Licht-/Spiegelrätseln *(guessed)*
 - View: 2D · Camera: static, das ganze Brett im Fenster *(guessed)*
 
 ## First minute
-Titel „New Dawn“ mit tanzenden Strahlen, ein Knopf „Spielen“. Level 1: ein roter Lichtstrahl schießt aus einer Linse ins Leere, daneben ein dunkler roter Kristall, ein Hinweis „Tippe auf ein Feld im Strahl“. Der Spieler tippt, ein Spiegel erscheint, der Strahl knickt ab – noch einmal tippen dreht den Spiegel, der Strahl trifft, der Kristall glüht auf, Funken, eine Sonne geht auf. Level 2–3 bringen zwei Knicke und eine Mauer, Level 4 zwei Farben. *(guessed)*
+Titel „New Dawn“: drei Linsen speisen einen weißen Kristall, ein Knopf „Spielen“. Level 1: ein roter Lichtstrahl schießt aus einer Linse ins Leere, daneben ein dunkler roter Kristall, ein Hinweis „Tippe auf das umrandete Feld im Strahl“, und genau dieses Feld pulsiert. Der Spieler tippt, ein Spiegel erscheint, der Strahl knickt in die falsche Richtung ab – noch einmal tippen dreht den Spiegel, der Strahl trifft, der Kristall glüht auf, Funken, die Sonne scheint durchs Brett. Level 2–3 bringen zwei und drei Knicke und Mauern, Level 4 zwei Farben. *(guessed)*
 
 ## Challenge
-Ab Level 5 (ca. Minute 5) kreuzen sich Strahlen, und ein Spiegel für Rot lenkt plötzlich Grün ab; ab Kapitel 2 müssen zwei Strahlen im selben Kristall ankommen, und eine falsche Farbe lässt ihn flackern. Spiegel sind begrenzt (Par + 1); drei Sterne nur mit Par und ohne Hinweis. Kein Verlieren: Rückgängig und Neustart sind gratis. Kapitel 3 bringt Farbfilter und weiße Kristalle. *(guessed)*
+Ab Level 5 (ca. Minute 5) müssen sich Strahlen kreuzen, und ein Spiegel für Rot lenkt plötzlich Grün ab; ab Kapitel 2 müssen zwei Strahlen im selben Kristall ankommen, und eine falsche Farbe lässt ihn flackern und erscheint durchgestrichen unter ihm. Spiegel sind begrenzt (Par + 1); Par ist bewiesen die kleinste mögliche Spiegelzahl, drei Sterne nur mit Par und ohne Hinweis. Kein Verlieren: Rückgängig und Neustart sind gratis. Kapitel 3 bringt Farbglas, das wirklich zählt, und weiße Kristalle. Das Tagesrätsel steigt von Montag bis Sonntag an und ist nie schwerer als der eigene Fortschritt; Endlos wird mit jedem Rätsel schwerer. *(guessed)*
 
 ## Core loop
 - Strahlen ansehen → Spiegel setzen/drehen → Strahlen springen live um
@@ -45,6 +45,11 @@ Ab Level 5 (ca. Minute 5) kreuzen sich Strahlen, und ein Spiegel für Rot lenkt 
 - [x] Rückgängig ohne Limit, Neustart, Fortschritt gespeichert (offline, localStorage)
 - [x] Tagesrätsel und Endlos-Modus aus dem Generator
 - [x] Synth-Sounds (Web Audio), Stummschalten
+- [x] Generator mit exaktem Löser: jedes Brett lösbar, Par = kleinste Spiegelzahl
+- [x] Formen pro Grundfarbe für Farbenblinde; Marker zeigen fehlende und falsche Farben
+
+## Keep
+-
 
 ## Avoid
 - Internet-Abhängigkeiten (alles offline, eine Datei)

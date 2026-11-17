@@ -553,8 +553,8 @@ function startPuzzle(mode, li = 0) {
   } else {
     li = clamp(li | 0, 0, LEVELS.length - 1); spec = LEVELS[li];
     s = CONFIG.seed * 100003 + li * 7919 + 11;
-    const ch = CHAPTERS[Math.floor(li / 10)];
-    name = `Level ${li + 1}`; sub = `Kapitel ${Math.floor(li / 10) + 1} · ${ch.name}`; theme = ch.theme;
+    const ch = CHAPTERS[Math.min(CHAPTERS.length - 1, Math.floor(li / 10))]; // levels past 30 stay in the last chapter
+    name = `Level ${li + 1}`; sub = `Kapitel ${CHAPTERS.indexOf(ch) + 1} · ${ch.name}`; theme = ch.theme;
   }
   const lv = generate(spec, s);
   state = {
