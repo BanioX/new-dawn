@@ -10,7 +10,7 @@
 <meta name="description" content="New Dawn – ein Lichträtsel: Lenke farbige Lichtstrahlen mit Spiegeln zu Kristallen. Läuft offline.">
 <title>New Dawn</title>
 <style>
-  :root { --bg: #070b1f; --ink: #eef1ff; }
+  :root { --bg: #070b1f; --ink: #eef1ff; color-scheme: dark; }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #070b1f; --ink: #eef1ff; } }
   :root[data-theme="dark"] { --bg: #070b1f; --ink: #eef1ff; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden; }
@@ -63,7 +63,7 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 let VK = 1; // CSS pixels per logical unit
 function fit() { // fills the window; the short side is 440..760 logical units so text stays readable
-  const iw = Math.max(1, innerWidth), ih = Math.max(1, innerHeight);
+  const b = document.body, iw = Math.max(1, (b && b.clientWidth) || innerWidth), ih = Math.max(1, (b && b.clientHeight) || innerHeight); // the page box: inside any safe-area padding
   const short = Math.min(iw, ih);
   VK = short / Math.max(440, Math.min(760, short));
   W = Math.round(iw / VK); H = Math.round(ih / VK);
@@ -113,13 +113,14 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => down.delete(e.code));
 canvas.addEventListener('pointerdown', e => {
   startAudio();
-  const x = e.clientX / VK, y = e.clientY / VK;
+  const r = canvas.getBoundingClientRect(), x = (e.clientX - r.left) / VK, y = (e.clientY - r.top) / VK;
   taps.push({ x, y, btn: e.button });
   Object.assign(pointer, { x, y, inside: true, mouse: e.pointerType === 'mouse' });
   e.preventDefault();
 });
 canvas.addEventListener('pointermove', e => {
-  Object.assign(pointer, { x: e.clientX / VK, y: e.clientY / VK, inside: true, mouse: e.pointerType === 'mouse' });
+  const r = canvas.getBoundingClientRect();
+  Object.assign(pointer, { x: (e.clientX - r.left) / VK, y: (e.clientY - r.top) / VK, inside: true, mouse: e.pointerType === 'mouse' });
 });
 canvas.addEventListener('pointerleave', () => { pointer.inside = false; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
