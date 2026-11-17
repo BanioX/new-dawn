@@ -17,7 +17,7 @@ Sonne aufgeht.
 - **Schön:** leuchtende Strahlen mit fließenden Lichtfunken, facettierte Kristalle,
   Sternenhimmel, Hügel und ein Sonnenaufgang. Alles wird im Code gezeichnet.
 - **Deutsch und Englisch:** Das Spiel wählt die Sprache deines Browsers; umschalten kannst du
-  jederzeit mit dem Knopf `DE | EN` im Titelbild oder der Taste `L`.
+  jederzeit mit dem Knopf `DE | EN` im Titelbild und im Menü (Level-Auswahl) oder mit der Taste `L`.
 
 ## Spielen
 

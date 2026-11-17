@@ -1320,9 +1320,12 @@ const scenes = {
     draw(t) {
       drawSky(t); ui.buttons = [];
       button(16, 14, 52, 52, '', () => { SFX.click(); goScene('title'); }, { icon: 'back' });
-      text(T().pickLevel, W / 2, 40, 26, '#fff', 'center', 800);
-      text(`${starCount()} / ${LEVELS.length * 3}`, W - 46, 40, 18, '#ffd98a', 'right', 700);
-      starPath(W - 28, 40, 10); ctx.fillStyle = '#ffd98a'; ctx.fill();
+      langSwitch(W - 120, 15); // the language can be changed here too: this is where the in-game menu button leads
+      text(T().pickLevel, W / 2, 30, 24, '#fff', 'center', 800);
+      const sc = `${starCount()} / ${LEVELS.length * 3}`;
+      ctx.font = `700 15px ${FONT}`; const x0 = W / 2 - (ctx.measureText(sc).width + 20) / 2;
+      starPath(x0 + 7, 59, 7); ctx.fillStyle = '#ffd98a'; ctx.fill();
+      text(sc, x0 + 20, 59, 15, '#ffd98a', 'left', 700);
       const land = W > H * 1.12, cols = land ? 10 : 5, rowsPer = 10 / cols;
       const top = 84, headH = 34, gapY = 12, gapX = 10;
       const tileW = Math.min(92, (W - 32 - gapX * (cols - 1)) / cols);

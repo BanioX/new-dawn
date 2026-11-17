@@ -16,7 +16,7 @@ and make every crystal shine. Each chapter gets a little brighter, until the sun
 - **Beautiful:** glowing beams with flowing sparks of light, faceted crystals, a starry sky,
   hills and a sunrise. Everything is drawn in code.
 - **German and English:** the game picks your browser's language; switch any time with the
-  `DE | EN` button on the title screen or the `L` key.
+  `DE | EN` button on the title screen and in the menu (level select), or with the `L` key.
 
 ## Play
 

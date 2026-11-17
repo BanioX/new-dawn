@@ -177,8 +177,8 @@ Welche Sprache gilt, entscheidet in dieser Reihenfolge:
 2. die gespeicherte Wahl (`lang` im Spielstand),
 3. die Sprache des Browsers: Deutsch, wenn sie mit `de` beginnt, sonst Englisch.
 
-`toggleLang()` schaltet um und speichert die Wahl. Das geht im Titelbild über den Knopf `DE | EN`
-und auf Titel und Level-Auswahl mit der Taste `L`. Namen, Untertitel und Tipps eines Rätsels werden
+`toggleLang()` schaltet um und speichert die Wahl. Das geht über den Knopf `DE | EN` im Titelbild und in der
+Level-Auswahl (dorthin führt der Knopf „Menü“ im Spiel) sowie auf beiden Bildschirmen mit der Taste `L`. Namen, Untertitel und Tipps eines Rätsels werden
 beim Zeichnen übersetzt (`puzzleName`, `puzzleSub`, `puzzleTip`), deshalb wirkt ein Wechsel sofort.
 
 **Eine neue Sprache** ist ein weiterer Block in `STR` mit denselben Schlüsseln, z. B. `fr: { … }`.
